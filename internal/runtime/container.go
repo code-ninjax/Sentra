@@ -229,6 +229,10 @@ func NewID() (string, error) {
 
 var cachedStateDir string
 
+// StateRoot exposes the resolved state directory to sibling packages
+// (image, overlayfs) that share the same content-addressable layout.
+func StateRoot() (string, error) { return stateDir() }
+
 // stateDir returns the Sentra state root. Prefers /var/lib/sentra when
 // writable (root), falls back to ~/.sentra (rootless). No daemon, no lock
 // server — plain files.

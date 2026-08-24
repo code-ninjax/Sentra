@@ -12,6 +12,7 @@ const usage = `sentra — daemonless OCI container runtime
 
 Usage:
   sentra run  --rootfs DIR [--rw] [-d] [--name ID] [--memory MB] [--cpus N] -- CMD [ARGS...]
+  sentra pull IMAGE            fetch an OCI image and build a merged rootfs
   sentra ps
   sentra stop CONTAINER
   sentra rm   CONTAINER
@@ -29,6 +30,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		err = cli.RunCmd(os.Args[2:])
+	case "pull":
+		err = cli.PullCmd(os.Args[2:])
 	case "ps":
 		err = cli.PsCmd(os.Args[2:])
 	case "stop":
