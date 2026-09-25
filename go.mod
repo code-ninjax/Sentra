@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/google/go-containerregistry v0.21.9
 	github.com/opencontainers/runtime-spec v1.2.0
+	golang.org/x/sys v0.47.0
 )
 
 require (
@@ -15,6 +16,5 @@ require (
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
 )

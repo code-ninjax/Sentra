@@ -35,16 +35,32 @@ func ConfigCmd(args []string) error {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 	defer w.Flush()
-	fmt.Fprintf(w, "base\t%s\n", plan.Base)
+	fmt.Fprintf(w, "stages\t%d\n", len(plan.Stages))
 	fmt.Fprintf(w, "secure\trootless=%t readonly=%t seccomp=%s\n",
 		plan.Security.Rootless, plan.Security.Readonly, plan.Security.Seccomp)
-	fmt.Fprintf(w, "steps\t%d\n", len(plan.Steps))
-	for _, s := range plan.Steps {
-		line := fmt.Sprintf("  %d\t%s\t%s", s.Line, s.Type, s.Summary())
-		if s.Cache != "" {
-			line += fmt.Sprintf("\t[cache: %s]", s.Cache)
+
+	for i, stage := range plan.Stages {
+		last := i == len(plan.Stages)-1
+		name := stage.Name
+		if name == "" {
+			name = "(final)"
 		}
-		fmt.Fprintln(w, line)
+		role := "stage"
+		if last {
+			role = "image"
+		}
+		fmt.Fprintf(w, "\n%s\t%s\tbase %s\n", role, name, stage.Base)
+		fmt.Fprintf(w, "  steps\t%d\n", len(stage.Steps))
+		for _, s := range stage.Steps {
+			line := fmt.Sprintf("  %d\t%s\t%s", s.Line, s.Type, s.Summary())
+			if s.From != "" {
+				line += fmt.Sprintf("\t[from: %s]", s.From)
+			}
+			if s.Cache != "" {
+				line += fmt.Sprintf("\t[cache: %s]", s.Cache)
+			}
+			fmt.Fprintln(w, line)
+		}
 	}
 	return nil
 }

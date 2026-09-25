@@ -1,6 +1,10 @@
 package runtime
 
-import "github.com/opencontainers/runtime-spec/specs-go"
+import (
+	"os"
+
+	"github.com/opencontainers/runtime-spec/specs-go"
+)
 
 // DefaultNamespaces returns the isolation set Sentra applies to every
 // container: pid, net, mnt, uts, ipc.
@@ -22,4 +26,22 @@ func DefaultNamespaces(rootless bool) []specs.LinuxNamespace {
 		specs.LinuxNamespace{Type: specs.UTSNamespace},
 		specs.LinuxNamespace{Type: specs.IPCNamespace},
 	)
+}
+
+// UserMappings returns the uid/gid mapping for a rootless container.
+//
+// runc rejects a user namespace with no mappings at all, so an unprivileged
+// user must be mapped explicitly. MVP maps the invoking user to container
+// root with a single-ID range: enough to run images, and it avoids
+// depending on /etc/subuid ranges being configured on the host.
+func UserMappings() (specs.LinuxIDMapping, specs.LinuxIDMapping) {
+	return specs.LinuxIDMapping{
+		ContainerID: 0,
+		HostID:      uint32(os.Getuid()),
+		Size:        1,
+	}, specs.LinuxIDMapping{
+		ContainerID: 0,
+		HostID:      uint32(os.Getgid()),
+		Size:        1,
+	}
 }

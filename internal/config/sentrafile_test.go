@@ -24,10 +24,14 @@ func TestParseNodeExample(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if plan.Base != "node:20-slim" {
-		t.Errorf("Base = %q, want node:20-slim", plan.Base)
+	if len(plan.Stages) != 1 {
+		t.Fatalf("stages = %d, want 1", len(plan.Stages))
 	}
-	if got, want := len(plan.Steps), 7; got != want {
+	stage := plan.Final()
+	if stage.Base != "node:20-slim" {
+		t.Errorf("Base = %q, want node:20-slim", stage.Base)
+	}
+	if got, want := len(stage.Steps), 7; got != want {
 		t.Fatalf("steps = %d, want %d", got, want)
 	}
 
@@ -44,10 +48,10 @@ func TestParseNodeExample(t *testing.T) {
 		{DirectiveStart, "npm run start"},
 	}
 	for i, w := range want {
-		if plan.Steps[i].Type != w.typ {
-			t.Errorf("step %d type = %q, want %q", i, plan.Steps[i].Type, w.typ)
+		if stage.Steps[i].Type != w.typ {
+			t.Errorf("step %d type = %q, want %q", i, stage.Steps[i].Type, w.typ)
 		}
-		if got := plan.Steps[i].Summary(); got != w.desc {
+		if got := stage.Steps[i].Summary(); got != w.desc {
 			t.Errorf("step %d summary = %q, want %q", i, got, w.desc)
 		}
 	}
@@ -67,11 +71,11 @@ func TestParseAccepts(t *testing.T) {
 			name: "directives are case insensitive",
 			in:   "BASE alpine:3.20\nEXEC echo hi\n",
 			want: func(t *testing.T, p *Plan) {
-				if p.Base != "alpine:3.20" {
-					t.Errorf("Base = %q", p.Base)
+				if p.Final().Base != "alpine:3.20" {
+					t.Errorf("Base = %q", p.Final().Base)
 				}
-				if p.Steps[0].Type != DirectiveExec {
-					t.Errorf("type = %q", p.Steps[0].Type)
+				if p.Final().Steps[0].Type != DirectiveExec {
+					t.Errorf("type = %q", p.Final().Steps[0].Type)
 				}
 			},
 		},
@@ -79,8 +83,8 @@ func TestParseAccepts(t *testing.T) {
 			name: "crlf line endings",
 			in:   "base alpine\r\nworkdir /app\r\n",
 			want: func(t *testing.T, p *Plan) {
-				if p.Steps[0].Path != "/app" {
-					t.Errorf("path = %q", p.Steps[0].Path)
+				if p.Final().Steps[0].Path != "/app" {
+					t.Errorf("path = %q", p.Final().Steps[0].Path)
 				}
 			},
 		},
@@ -88,7 +92,7 @@ func TestParseAccepts(t *testing.T) {
 			name: "quoted exec argument",
 			in:   `base alpine` + "\n" + `exec sh -c "echo hi && echo bye"` + "\n",
 			want: func(t *testing.T, p *Plan) {
-				argv := p.Steps[0].Argv
+				argv := p.Final().Steps[0].Argv
 				if len(argv) != 3 || argv[2] != "echo hi && echo bye" {
 					t.Errorf("argv = %q", argv)
 				}
@@ -98,7 +102,7 @@ func TestParseAccepts(t *testing.T) {
 			name: "single quotes are literal",
 			in:   "base alpine\nexec echo '$HOME'\n",
 			want: func(t *testing.T, p *Plan) {
-				if got := p.Steps[0].Argv[1]; got != "$HOME" {
+				if got := p.Final().Steps[0].Argv[1]; got != "$HOME" {
 					t.Errorf("argv[1] = %q, want $HOME", got)
 				}
 			},
@@ -107,8 +111,8 @@ func TestParseAccepts(t *testing.T) {
 			name: "escaped space in copy",
 			in:   `base alpine` + "\n" + `copy my\ file.txt /app/` + "\n",
 			want: func(t *testing.T, p *Plan) {
-				if p.Steps[0].Src != "my file.txt" {
-					t.Errorf("src = %q", p.Steps[0].Src)
+				if p.Final().Steps[0].Src != "my file.txt" {
+					t.Errorf("src = %q", p.Final().Steps[0].Src)
 				}
 			},
 		},
@@ -116,7 +120,7 @@ func TestParseAccepts(t *testing.T) {
 			name: "multiple env pairs on one line",
 			in:   "base alpine\nenv A=1 B=2\n",
 			want: func(t *testing.T, p *Plan) {
-				if got := strings.Join(p.Steps[0].Env, ","); got != "A=1,B=2" {
+				if got := strings.Join(p.Final().Steps[0].Env, ","); got != "A=1,B=2" {
 					t.Errorf("env = %q", got)
 				}
 			},
@@ -125,8 +129,8 @@ func TestParseAccepts(t *testing.T) {
 			name: "empty env value",
 			in:   "base alpine\nenv EMPTY=\n",
 			want: func(t *testing.T, p *Plan) {
-				if p.Steps[0].Env[0] != "EMPTY=" {
-					t.Errorf("env = %q", p.Steps[0].Env[0])
+				if p.Final().Steps[0].Env[0] != "EMPTY=" {
+					t.Errorf("env = %q", p.Final().Steps[0].Env[0])
 				}
 			},
 		},
@@ -134,7 +138,7 @@ func TestParseAccepts(t *testing.T) {
 			name: "ports with protocols",
 			in:   "base alpine\nexpose 80/tcp 53/udp\n",
 			want: func(t *testing.T, p *Plan) {
-				if got := p.Steps[0].Summary(); got != "80/tcp 53/udp" {
+				if got := p.Final().Steps[0].Summary(); got != "80/tcp 53/udp" {
 					t.Errorf("ports = %q", got)
 				}
 			},
@@ -152,14 +156,14 @@ func TestParseAccepts(t *testing.T) {
 			name: "cache key attaches to the next step",
 			in:   "base alpine\ncopy a b\ncache key=deps-v1\ncopy c d\nexec make\n",
 			want: func(t *testing.T, p *Plan) {
-				if p.Steps[0].Cache != "" {
-					t.Errorf("step 0 cache = %q, want empty", p.Steps[0].Cache)
+				if p.Final().Steps[0].Cache != "" {
+					t.Errorf("step 0 cache = %q, want empty", p.Final().Steps[0].Cache)
 				}
-				if p.Steps[1].Cache != "deps-v1" {
-					t.Errorf("step 1 cache = %q, want deps-v1", p.Steps[1].Cache)
+				if p.Final().Steps[1].Cache != "deps-v1" {
+					t.Errorf("step 1 cache = %q, want deps-v1", p.Final().Steps[1].Cache)
 				}
-				if p.Steps[2].Cache != "" {
-					t.Errorf("step 2 cache = %q, want empty", p.Steps[2].Cache)
+				if p.Final().Steps[2].Cache != "" {
+					t.Errorf("step 2 cache = %q, want empty", p.Final().Steps[2].Cache)
 				}
 			},
 		},
@@ -167,8 +171,8 @@ func TestParseAccepts(t *testing.T) {
 			name: "comments and blank lines are ignored",
 			in:   "#top\n\nbase alpine\n\n  # indented comment\nexec true\n",
 			want: func(t *testing.T, p *Plan) {
-				if len(p.Steps) != 1 {
-					t.Errorf("steps = %d, want 1", len(p.Steps))
+				if len(p.Final().Steps) != 1 {
+					t.Errorf("steps = %d, want 1", len(p.Final().Steps))
 				}
 			},
 		},
@@ -176,7 +180,7 @@ func TestParseAccepts(t *testing.T) {
 			name: "hash mid-line is literal",
 			in:   "base alpine\nexec echo #1\n",
 			want: func(t *testing.T, p *Plan) {
-				if got := p.Steps[0].Argv[1]; got != "#1" {
+				if got := p.Final().Steps[0].Argv[1]; got != "#1" {
 					t.Errorf("argv[1] = %q, want #1", got)
 				}
 			},
@@ -185,8 +189,60 @@ func TestParseAccepts(t *testing.T) {
 			name: "base only is valid",
 			in:   "base alpine\n",
 			want: func(t *testing.T, p *Plan) {
-				if len(p.Steps) != 0 {
-					t.Errorf("steps = %d, want 0", len(p.Steps))
+				if len(p.Final().Steps) != 0 {
+					t.Errorf("steps = %d, want 0", len(p.Final().Steps))
+				}
+			},
+		},
+		{
+			name: "multi-stage build",
+			in: "base golang:1.22 as builder\n" +
+				"workdir /src\n" +
+				"exec go build -o /out/app .\n" +
+				"base alpine:3.20\n" +
+				"copy --from=builder /out/app /app\n" +
+				"start /app\n",
+			want: func(t *testing.T, p *Plan) {
+				if len(p.Stages) != 2 {
+					t.Fatalf("stages = %d, want 2", len(p.Stages))
+				}
+				if p.Stages[0].Name != "builder" {
+					t.Errorf("stage 0 name = %q, want builder", p.Stages[0].Name)
+				}
+				if p.Stages[0].Base != "golang:1.22" {
+					t.Errorf("stage 0 base = %q", p.Stages[0].Base)
+				}
+				if len(p.Stages[0].Steps) != 2 {
+					t.Errorf("stage 0 steps = %d, want 2", len(p.Stages[0].Steps))
+				}
+
+				final := p.Final()
+				if final.Base != "alpine:3.20" {
+					t.Errorf("final base = %q", final.Base)
+				}
+				if len(final.Steps) != 2 {
+					t.Fatalf("final steps = %d, want 2", len(final.Steps))
+				}
+				if final.Steps[0].From != "builder" {
+					t.Errorf("copy from = %q, want builder", final.Steps[0].From)
+				}
+				if final.Steps[0].Src != "/out/app" || final.Steps[0].Dest != "/app" {
+					t.Errorf("copy = %q -> %q", final.Steps[0].Src, final.Steps[0].Dest)
+				}
+				if g := p.StageNames(); len(g) != 1 || g[0] != "builder" {
+					t.Errorf("stage names = %v", g)
+				}
+			},
+		},
+		{
+			name: "stage inheritance through base",
+			in: "base alpine as base\n" +
+				"exec touch /marker\n" +
+				"base base\n" +
+				"exec true\n",
+			want: func(t *testing.T, p *Plan) {
+				if p.Final().Base != "base" {
+					t.Errorf("final base = %q, want the earlier stage name", p.Final().Base)
 				}
 			},
 		},
@@ -211,10 +267,10 @@ func TestParseRejects(t *testing.T) {
 	}{
 		{"empty file", "", "missing base"},
 		{"unknown directive", "base alpine\nfrobnicate x\n", "unknown directive"},
-		{"base not first", "workdir /app\nbase alpine\n", "must be the first"},
-		{"duplicate base", "base alpine\nbase busybox\n", "duplicate base"},
-		{"base no image", "base\n", "exactly one image"},
-		{"base too many args", "base alpine extra\n", "exactly one image"},
+		{"directive before base", "workdir /app\nbase alpine\n", "must come after a base"},
+		{"unnamed intermediate stage", "base alpine\nbase busybox\n", "every stage except the last must be named"},
+		{"base no image", "base\n", "base expects <image>"},
+		{"base too many args", "base alpine extra\n", "base expects <image>"},
 		{"relative workdir", "base alpine\nworkdir app\n", "must be absolute"},
 		{"copy one arg", "base alpine\ncopy only\n", "copy requires"},
 		{"copy three args", "base alpine\ncopy a b c\n", "copy requires"},
@@ -239,6 +295,11 @@ func TestParseRejects(t *testing.T) {
 		{"duplicate secure", "base alpine\nsecure readonly=false\nsecure readonly=true\n", "duplicate secure"},
 		{"unterminated quote", "base alpine\nexec sh -c \"oops\n", "unterminated double quote"},
 		{"unterminated single quote", "base alpine\nexec 'oops\n", "unterminated single quote"},
+		{"copy from unknown stage", "base alpine\ncopy --from=nope a b\n", "unknown stage"},
+		{"copy from missing value", "base alpine as s\nbase busybox\ncopy --from= a b\n", "needs a stage name"},
+		{"duplicate stage name", "base alpine as build\nbase busybox as build\n", "duplicate stage name"},
+		{"bad stage name", "base alpine as 9bad\n", "invalid stage name"},
+		{"base as without name", "base alpine as\n", "base expects <image>"},
 	}
 
 	for _, tt := range tests {

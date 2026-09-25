@@ -27,6 +27,8 @@ type Container struct {
 	LogFile   string    `json:"log_file"`
 	Readonly  bool      `json:"readonly"`
 	Detached  bool      `json:"detached"`
+	Env       []string  `json:"env,omitempty"`
+	Cwd       string    `json:"cwd,omitempty"`
 }
 
 // Seccomp is intentionally absent from the spec builder below.
@@ -54,18 +56,27 @@ func BuildSpec(c *Container, limits CgroupLimits) (*specs.Spec, error) {
 		host = host[:12]
 	}
 
+	env := c.Env
+	if len(env) == 0 {
+		env = []string{
+			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+			"TERM=xterm",
+			"HOME=/root",
+		}
+	}
+	cwd := c.Cwd
+	if cwd == "" {
+		cwd = "/"
+	}
+
 	spec := &specs.Spec{
 		Version: "1.1.0",
 		Process: &specs.Process{
 			Terminal: false,
 			User:     specs.User{},
 			Args:     c.Cmd,
-			Env: []string{
-				"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-				"TERM=xterm",
-				"HOME=/root",
-			},
-			Cwd: "/",
+			Env:      env,
+			Cwd:      cwd,
 		},
 		Hostname: host,
 		Root: &specs.Root{
@@ -79,13 +90,25 @@ func BuildSpec(c *Container, limits CgroupLimits) (*specs.Spec, error) {
 		},
 	}
 	spec.Mounts = DefaultMounts(rootless)
+	if rootless {
+		uidMap, gidMap := UserMappings()
+		spec.Linux.UIDMappings = []specs.LinuxIDMapping{uidMap}
+		spec.Linux.GIDMappings = []specs.LinuxIDMapping{gidMap}
+	}
 	return spec, nil
 }
 
 // DefaultMounts declares the pseudo-filesystems every container needs.
 // runc mounts nothing implicitly — an undeclared /proc means no /proc.
+//
+// The same set serves rootful and rootless runs: in the rootless case the
+// container owns a fresh user, pid and network namespace, which is exactly
+// what the kernel requires to permit a new procfs and sysfs instance.
+// Binding the host's /proc instead is rejected by runc's proc-safety
+// check, so it is deliberately not attempted.
 func DefaultMounts(rootless bool) []specs.Mount {
-	mounts := []specs.Mount{
+	_ = rootless
+	return []specs.Mount{
 		{Destination: "/proc", Type: "proc", Source: "proc"},
 		{Destination: "/dev", Type: "tmpfs", Source: "tmpfs",
 			Options: []string{"nosuid", "strictatime", "mode=755", "size=65536k"}},
@@ -98,15 +121,6 @@ func DefaultMounts(rootless bool) []specs.Mount {
 		{Destination: "/tmp", Type: "tmpfs", Source: "tmpfs",
 			Options: []string{"nosuid", "noexec", "nodev", "mode=1777"}},
 	}
-	if rootless {
-		// Mounting proc/sysfs fresh inside a user namespace is restricted
-		// on many kernels; bind-mounting the host's copies always works.
-		mounts[0] = specs.Mount{Destination: "/proc", Type: "bind",
-			Source: "/proc", Options: []string{"nosuid", "noexec", "nodev"}}
-		mounts[4] = specs.Mount{Destination: "/sys", Type: "bind",
-			Source: "/sys", Options: []string{"nosuid", "noexec", "nodev", "ro"}}
-	}
-	return mounts
 }
 
 // CreateBundle writes the runc bundle for c: <bundles>/<id>/config.json.

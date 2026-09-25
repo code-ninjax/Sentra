@@ -106,9 +106,10 @@ func Extract(blobPath, dest string) error {
 		}
 	}
 
-	// Completion marker — overlayfs.HasLayer keys off this so a crashed
-	// mid-extraction pull is never mistaken for a cached layer.
-	return os.WriteFile(filepath.Join(dest, ".complete"), nil, 0o644)
+	// Completion marker — a sibling file, never a file inside the layer.
+	// A marker inside the directory would become part of the image the
+	// moment the directory is used as an overlayfs lowerdir.
+	return os.WriteFile(dest+".complete", nil, 0o644)
 }
 
 func extractEntry(hdr *tar.Header, r io.Reader, dest string) error {

@@ -108,6 +108,66 @@ func saveRecord(stateRoot string, rec imageRecord) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// BaseDigest returns the manifest digest recorded for a previously pulled
+// reference. The build engine uses it as the content identity of a base
+// image layer: a retagged or rebuilt base must not silently reuse cache
+// entries built on the old one.
+func BaseDigest(stateRoot, ref string) string {
+	rec, ok := lookupRecord(stateRoot, ref)
+	if !ok {
+		return ""
+	}
+	return rec.Digest
+}
+
+// LayerDirs returns the extracted layer directories composing a pulled
+// reference, ordered bottom to top.
+//
+// The build engine uses these directly as overlayfs lowerdirs rather than
+// the merged rootfs: stacking an overlay on top of another overlay mount
+// is not something the kernel composes reliably, and plain layer
+// directories also skip the merge copy entirely.
+func LayerDirs(stateRoot, ref string) []string {
+	rec, ok := lookupRecord(stateRoot, ref)
+	if !ok {
+		return nil
+	}
+	dirs := make([]string, 0, len(rec.LayerIDs))
+	for _, id := range rec.LayerIDs {
+		dirs = append(dirs, overlayfs.LayerDir(stateRoot, id))
+	}
+	return dirs
+}
+
+func lookupRecord(stateRoot, ref string) (imageRecord, bool) {
+	data, err := os.ReadFile(filepath.Join(stateRoot, "images.json"))
+	if err != nil {
+		return imageRecord{}, false
+	}
+	var records map[string]imageRecord
+	if json.Unmarshal(data, &records) != nil {
+		return imageRecord{}, false
+	}
+	rec, ok := records[ref]
+	return rec, ok
+}
+
+// MergedRootfs returns the merged rootfs directory pull created for a
+// reference. The build engine uses it only when the layer record is
+// unavailable.
+func MergedRootfs(stateRoot, ref string) (string, error) {
+	parsed, err := ParseRef(ref)
+	if err != nil {
+		return "", err
+	}
+	name := sanitize(parsed.Context().RepositoryStr() + "-" + parsed.Identifier())
+	path := filepath.Join(stateRoot, "rootfs", name)
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("no merged rootfs for %s (run: sentra pull %s)", ref, ref)
+	}
+	return path, nil
+}
+
 func short(hex string) string {
 	if len(hex) > 12 {
 		return hex[:12]

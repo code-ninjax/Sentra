@@ -7,15 +7,22 @@
 // # Syntax (locked for MVP)
 //
 //	# comment                    — full-line only; '#' mid-line is literal
-//	base <image>                 — required, must be the first directive
+//	base <image> [as <name>]     — required, first; each base starts a stage
 //	workdir <abs-path>           — absolute paths only
-//	copy <src> <dest>            — paths are always relative to build context
+//	copy [--from=<stage>] <src> <dest>
 //	exec <cmd> [args...]         — argv form, no implicit shell
 //	env KEY=VALUE [KEY=VALUE...] — one or more pairs per line
 //	expose <port>[/proto] ...    — ports are metadata, not host publishing
-//	start <cmd> [args...]        — container entrypoint, at most one, last
+//	start <cmd> [args...]        — container entrypoint, at most one
 //	cache key=<value>            — optional manual cache-key override
 //	secure rootless=<bool> readonly=<bool> seccomp=<default|strict>
+//
+// A Sentrafile may declare several stages. Each `base` line opens a new
+// stage, optionally naming it with `as <name>`. A later stage can start
+// from an earlier one by naming it in its own `base`, or can lift files out
+// of it with `copy --from=<name>`. Only the final stage produces the image,
+// so every earlier stage must be named. The last stage carries the
+// environment, ports and entrypoint the image is run with.
 //
 // Blank lines are ignored. Directives are case-insensitive (BASE == base).
 // Arguments are tokenized with shell-like quoting: single quotes are
@@ -69,6 +76,10 @@ type Step struct {
 	Src  string `json:"src,omitempty"`
 	Dest string `json:"dest,omitempty"`
 
+	// From names the stage a copy reads from instead of the build context.
+	// Empty means "read from the build context".
+	From string `json:"from,omitempty"`
+
 	// exec, start
 	Argv []string `json:"argv,omitempty"`
 
@@ -119,12 +130,33 @@ func DefaultSecurity() Security {
 	return Security{Rootless: true, Readonly: true, Seccomp: "default"}
 }
 
-// Plan is a parsed Sentrafile: the base image, the ordered build steps,
-// and the security posture.
+// Stage is one base image plus the steps applied to it. A single-stage
+// Sentrafile parses into exactly one unnamed stage.
+type Stage struct {
+	Name  string `json:"name,omitempty"`
+	Base  string `json:"base"`
+	Steps []Step `json:"steps"`
+}
+
+// Plan is a parsed Sentrafile: one or more stages plus the security
+// posture. The final stage is the image the build produces.
 type Plan struct {
-	Base     string   `json:"base"`
-	Steps    []Step   `json:"steps"`
+	Stages   []Stage  `json:"stages"`
 	Security Security `json:"security"`
+}
+
+// Final returns the stage that becomes the image.
+func (p *Plan) Final() Stage { return p.Stages[len(p.Stages)-1] }
+
+// StageNames lists the named stages in declaration order.
+func (p *Plan) StageNames() []string {
+	var names []string
+	for _, s := range p.Stages {
+		if s.Name != "" {
+			names = append(names, s.Name)
+		}
+	}
+	return names
 }
 
 // Error is a parse failure tied to a source line so the user can fix the
@@ -158,7 +190,6 @@ func ParseFile(path string) (*Plan, error) {
 // Parse turns raw Sentrafile bytes into a Plan.
 func Parse(data []byte) (*Plan, error) {
 	plan := &Plan{Security: DefaultSecurity()}
-	seenBase := false
 	seenSecure := false
 	seenStart := false
 
@@ -168,7 +199,8 @@ func Parse(data []byte) (*Plan, error) {
 	addStep := func(s Step) {
 		s.Cache = pendingCache
 		pendingCache = ""
-		plan.Steps = append(plan.Steps, s)
+		cur := &plan.Stages[len(plan.Stages)-1]
+		cur.Steps = append(cur.Steps, s)
 	}
 
 	for i, raw := range splitLines(data) {
@@ -184,19 +216,29 @@ func Parse(data []byte) (*Plan, error) {
 		directive := Directive(strings.ToLower(fields[0]))
 		args := fields[1:]
 
+		// Every directive except base needs an open stage to belong to.
+		if directive != DirectiveBase && len(plan.Stages) == 0 {
+			return nil, errf(line, "%s must come after a base directive", directive)
+		}
+
 		switch directive {
 		case DirectiveBase:
-			if seenBase {
-				return nil, errf(line, "duplicate base directive")
+			name, base, err := parseBase(args, line)
+			if err != nil {
+				return nil, err
 			}
-			if i != 0 {
+			if len(plan.Stages) == 0 && i != 0 {
 				return nil, errf(line, "base must be the first directive")
 			}
-			if len(args) != 1 || args[0] == "" {
-				return nil, errf(line, "base requires exactly one image reference")
+			for _, existing := range plan.Stages {
+				if name != "" && existing.Name == name {
+					return nil, errf(line, "duplicate stage name %q", name)
+				}
 			}
-			plan.Base = args[0]
-			seenBase = true
+			// A base is a stage reference only when it names a stage
+			// declared above it. Everything else is an image reference —
+			// "alpine" is an image, not a misspelled stage.
+			plan.Stages = append(plan.Stages, Stage{Name: name, Base: base})
 
 		case DirectiveWorkdir:
 			if len(args) != 1 || args[0] == "" {
@@ -208,11 +250,19 @@ func Parse(data []byte) (*Plan, error) {
 			addStep(Step{Type: DirectiveWorkdir, Line: line, Path: args[0]})
 
 		case DirectiveCopy:
-			if len(args) != 2 {
-				return nil, errf(line, "copy requires <src> <dest>")
+			from, hasFrom, positional := stripFlags(args)
+			if hasFrom && from == "" {
+				return nil, errf(line, "copy --from= needs a stage name")
+			}
+			if len(positional) != 2 {
+				return nil, errf(line, "copy requires [--from=<stage>] <src> <dest>")
+			}
+			if from != "" && !stageExists(plan, from) {
+				return nil, errf(line, "copy --from=%s references unknown stage", from)
 			}
 			addStep(Step{
-				Type: DirectiveCopy, Line: line, Src: args[0], Dest: args[1],
+				Type: DirectiveCopy, Line: line,
+				Src: positional[0], Dest: positional[1], From: from,
 			})
 
 		case DirectiveExec:
@@ -283,8 +333,18 @@ func Parse(data []byte) (*Plan, error) {
 		}
 	}
 
-	if !seenBase {
+	if len(plan.Stages) == 0 {
 		return nil, &Error{Line: 1, Msg: "missing base directive (Sentrafile must start with 'base <image>')"}
+	}
+	// Every stage but the last must be named: an unnamed stage cannot be
+	// referenced, so it would be built and thrown away.
+	for i, s := range plan.Stages {
+		if i < len(plan.Stages)-1 && s.Name == "" {
+			return nil, &Error{
+				Line: 1,
+				Msg:  "every stage except the last must be named: base <image> as <name>",
+			}
+		}
 	}
 	if pendingCache != "" {
 		return nil, &Error{
@@ -293,6 +353,76 @@ func Parse(data []byte) (*Plan, error) {
 		}
 	}
 	return plan, nil
+}
+
+// parseBase reads `base <ref> [as <name>]`, returning the stage name (empty
+// when unnamed) and the base reference.
+func parseBase(args []string, line int) (name, base string, err error) {
+	switch len(args) {
+	case 1:
+		return "", args[0], nil
+	case 3:
+		if !strings.EqualFold(args[1], "as") {
+			return "", "", errf(line, "base expects <image> [as <name>], got %q", args[1])
+		}
+		if args[2] == "" {
+			return "", "", errf(line, "stage name after 'as' is empty")
+		}
+		if !looksLikeStageName(args[2]) {
+			return "", "", errf(line, "invalid stage name %q (use letters, digits, dashes, underscores)", args[2])
+		}
+		return args[2], args[0], nil
+	default:
+		return "", "", errf(line, "base expects <image> [as <name>]")
+	}
+}
+
+// stageExists reports whether a name refers to an already-declared stage.
+func stageExists(p *Plan, name string) bool {
+	for _, s := range p.Stages {
+		if s.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeStageName keeps image references and stage names from colliding.
+// Registry references always contain a '.', ':' or '/', none of which are
+// legal in a stage name.
+func looksLikeStageName(s string) bool {
+	if s == "" {
+		return false
+	}
+	if strings.ContainsAny(s, ".:/") {
+		return false
+	}
+	for i, r := range s {
+		ok := r == '-' || r == '_' ||
+			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(i > 0 && r >= '0' && r <= '9')
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// stripFlags pulls leading --key=value options off an argument list,
+// returning the recognised --from value, whether it was present at all, and
+// the positional arguments. Options after the first positional argument are
+// left alone, so paths that begin with "--" cannot silently disappear.
+func stripFlags(args []string) (from string, hasFrom bool, positional []string) {
+	positional = args
+	for len(positional) > 0 && strings.HasPrefix(positional[0], "--") {
+		opt := positional[0]
+		positional = positional[1:]
+		if strings.HasPrefix(opt, "--from=") {
+			from = strings.TrimPrefix(opt, "--from=")
+			hasFrom = true
+		}
+	}
+	return from, hasFrom, positional
 }
 
 func parseSecure(args []string, line int) (Security, error) {

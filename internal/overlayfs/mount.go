@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,15 @@ func Merge(stateRoot, name string, lowerdirs []string) (string, error) {
 
 	if err := mountOverlay(lowerdirs, upper, work, merged); err == nil {
 		return merged, nil
+	}
+
+	// A previous fallback merge may have left files that are no longer part
+	// of the requested layer chain. Never reuse those stale entries.
+	if err := os.RemoveAll(merged); err != nil {
+		return "", fmt.Errorf("clear fallback merge root: %w", err)
+	}
+	if err := os.MkdirAll(merged, 0o755); err != nil {
+		return "", fmt.Errorf("recreate fallback merge root: %w", err)
 	}
 	return merged, copyMerge(lowerdirs, merged)
 }
@@ -79,10 +89,6 @@ func applyLayer(layer, dst string) error {
 			}
 			return os.RemoveAll(filepath.Join(filepath.Dir(target), victim))
 		}
-		// Extraction bookkeeping marker, never materialized into the merge.
-		if name == ".complete" && !info.IsDir() {
-			return nil
-		}
 
 		switch {
 		case info.IsDir():
@@ -98,6 +104,47 @@ func applyLayer(layer, dst string) error {
 			return copyFile(path, target, info.Mode())
 		default:
 			return nil // devices/fifos skipped: base images don't need them
+		}
+	})
+}
+
+// CopyTree recursively copies a directory tree, preserving symlinks and
+// permission bits. The build engine uses it for the non-layered fallback
+// path, where the whole base rootfs must become writable.
+func CopyTree(src, dst string) error {
+	if src == "" {
+		return errors.New("copy source is empty")
+	}
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+
+		switch {
+		case rel == ".":
+			return os.MkdirAll(dst, 0o755)
+		case d.IsDir():
+			return os.MkdirAll(target, 0o755)
+		case d.Type()&os.ModeSymlink != 0:
+			link, err := os.Readlink(p)
+			if err != nil {
+				return err
+			}
+			os.Remove(target)
+			return os.Symlink(link, target)
+		case d.Type().IsRegular():
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			return copyFile(p, target, info.Mode())
+		default:
+			return nil
 		}
 	})
 }

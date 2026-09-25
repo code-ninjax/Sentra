@@ -20,10 +20,11 @@ func LayerDir(stateRoot, hex string) string {
 	return filepath.Join(LayersDir(stateRoot), hex)
 }
 
-// HasLayer reports whether a layer is fully extracted. The marker file is
-// written only after Extract() completes, so a half-extracted layer from a
-// crashed pull never counts.
+// HasLayer reports whether a layer is fully extracted. The completion
+// marker is a sibling file written only after Extract() finishes, so a
+// half-extracted layer from a crashed pull never counts, and the marker
+// itself never leaks into an image as a regular file.
 func HasLayer(stateRoot, hex string) bool {
-	_, err := os.Stat(filepath.Join(LayerDir(stateRoot, hex), ".complete"))
+	_, err := os.Stat(LayerDir(stateRoot, hex) + ".complete")
 	return err == nil
 }
