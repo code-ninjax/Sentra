@@ -1,0 +1,5 @@
+# Fixtures for subIDRange parsing. Format mirrors /etc/subuid: user:start:count
+builder:100000:65536
+builder:200000:1000
+# commented-out:999999:1
+other:300000:5000

@@ -23,7 +23,8 @@ func RmCmd(args []string) error {
 	}
 
 	id := fs.Arg(0)
-	if _, err := runtime.LoadContainer(id); err != nil {
+	c, err := runtime.LoadContainer(id)
+	if err != nil {
 		return err
 	}
 
@@ -36,6 +37,10 @@ func RmCmd(args []string) error {
 			return fmt.Errorf("force-delete %q: %w", id, err)
 		}
 	}
+
+	// Release ports and the namespace before the record disappears: this is
+	// the last chance to know what was allocated to this container.
+	cleanupNetwork(c)
 
 	if err := runtime.RemoveContainer(id); err != nil {
 		return err

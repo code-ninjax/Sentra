@@ -36,6 +36,10 @@ func StopCmd(args []string) error {
 		return fmt.Errorf("stop %q: %w", id, err)
 	}
 
+	// A stopped container is not coming back: release its network so the
+	// ports and address are not held until rm.
+	cleanupNetwork(c)
+
 	c.Status = "stopped"
 	return runtime.SaveContainer(c)
 }

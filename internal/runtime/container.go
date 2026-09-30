@@ -10,25 +10,35 @@ import (
 	"time"
 
 	"github.com/opencontainers/runtime-spec/specs-go"
+
+	"sentra/internal/security"
 )
 
 // Container is Sentra's record of a container, persisted as JSON under the
 // state dir. It is the single source of truth for `sentra ps/rm/logs/stop`.
 type Container struct {
-	ID        string    `json:"id"`
-	Image     string    `json:"image,omitempty"`
-	Rootfs    string    `json:"rootfs"`
-	Cmd       []string  `json:"cmd"`
-	Status    string    `json:"status"` // creating|running|exited|stopped
-	Pid       int       `json:"pid"`
-	ExitCode  int       `json:"exit_code"`
-	CreatedAt time.Time `json:"created_at"`
-	Bundle    string    `json:"bundle"`
-	LogFile   string    `json:"log_file"`
-	Readonly  bool      `json:"readonly"`
-	Detached  bool      `json:"detached"`
-	Env       []string  `json:"env,omitempty"`
-	Cwd       string    `json:"cwd,omitempty"`
+	ID        string           `json:"id"`
+	Image     string           `json:"image,omitempty"`
+	Rootfs    string           `json:"rootfs"`
+	Cmd       []string         `json:"cmd"`
+	Status    string           `json:"status"` // creating|running|exited|stopped
+	Pid       int              `json:"pid"`
+	ExitCode  int              `json:"exit_code"`
+	CreatedAt time.Time        `json:"created_at"`
+	Bundle    string           `json:"bundle"`
+	LogFile   string           `json:"log_file"`
+	Readonly  bool             `json:"readonly"`
+	Detached  bool             `json:"detached"`
+	Env       []string         `json:"env,omitempty"`
+	Cwd       string           `json:"cwd,omitempty"`
+	Posture   security.Posture `json:"posture"`
+
+	// NetnsPath joins an existing network namespace instead of creating an
+	// empty one. The network package creates it before the container starts.
+	NetnsPath string `json:"netns_path,omitempty"`
+	// Publish records host-to-container port mappings so `stop` and `rm` can
+	// remove their firewall rules.
+	Publish []string `json:"publish,omitempty"`
 }
 
 // Seccomp is intentionally absent from the spec builder below.
@@ -41,10 +51,14 @@ type Container struct {
 
 // BuildSpec produces the OCI runtime-spec config.json contents for a
 // container: namespaces (namespace.go), cgroups v2 limits (cgroups.go),
-// read-only root by default, and the standard /proc /dev /sys mounts runc
-// requires us to declare explicitly.
+// the security posture (security package), and the standard /proc /dev /sys
+// mounts runc requires us to declare explicitly.
 func BuildSpec(c *Container, limits CgroupLimits) (*specs.Spec, error) {
-	rootless := os.Getuid() != 0
+	posture := c.Posture
+	if posture.Seccomp == "" {
+		posture = security.Default()
+	}
+	posture.Rootless = posture.Rootless && os.Getuid() != 0
 
 	rootfsAbs, err := filepath.Abs(c.Rootfs)
 	if err != nil {
@@ -81,19 +95,23 @@ func BuildSpec(c *Container, limits CgroupLimits) (*specs.Spec, error) {
 		Hostname: host,
 		Root: &specs.Root{
 			Path:     rootfsAbs,
-			Readonly: c.Readonly,
+			Readonly: posture.Readonly,
 		},
 		Linux: &specs.Linux{
-			Namespaces: DefaultNamespaces(rootless),
+			Namespaces: DefaultNamespaces(posture.Rootless, c.NetnsPath),
 			Resources:  limits.Resources(),
-			// TODO(workstream 5): Seccomp + MaskedPaths/ReadonlyPaths here.
 		},
 	}
-	spec.Mounts = DefaultMounts(rootless)
-	if rootless {
-		uidMap, gidMap := UserMappings()
-		spec.Linux.UIDMappings = []specs.LinuxIDMapping{uidMap}
-		spec.Linux.GIDMappings = []specs.LinuxIDMapping{gidMap}
+	spec.Mounts = DefaultMounts(posture.Rootless)
+	if posture.Rootless {
+		uidMap, gidMap, err := security.Mappings()
+		if err != nil {
+			return nil, err
+		}
+		security.ApplyMappings(spec, uidMap, gidMap)
+	}
+	if err := security.Apply(spec, posture); err != nil {
+		return nil, err
 	}
 	return spec, nil
 }
@@ -108,7 +126,7 @@ func BuildSpec(c *Container, limits CgroupLimits) (*specs.Spec, error) {
 // check, so it is deliberately not attempted.
 func DefaultMounts(rootless bool) []specs.Mount {
 	_ = rootless
-	return []specs.Mount{
+	mounts := []specs.Mount{
 		{Destination: "/proc", Type: "proc", Source: "proc"},
 		{Destination: "/dev", Type: "tmpfs", Source: "tmpfs",
 			Options: []string{"nosuid", "strictatime", "mode=755", "size=65536k"}},
@@ -121,6 +139,20 @@ func DefaultMounts(rootless bool) []specs.Mount {
 		{Destination: "/tmp", Type: "tmpfs", Source: "tmpfs",
 			Options: []string{"nosuid", "noexec", "nodev", "mode=1777"}},
 	}
+
+	// The host's resolver configuration, so hostnames resolve. An image's
+	// own /etc/resolv.conf names a resolver that does not exist on this
+	// machine, and without this a container with working routing still
+	// cannot reach anything by name.
+	if _, err := os.Stat("/etc/resolv.conf"); err == nil {
+		mounts = append(mounts, specs.Mount{
+			Destination: "/etc/resolv.conf",
+			Type:        "bind",
+			Source:      "/etc/resolv.conf",
+			Options:     []string{"rbind", "ro"},
+		})
+	}
+	return mounts
 }
 
 // CreateBundle writes the runc bundle for c: <bundles>/<id>/config.json.

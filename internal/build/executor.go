@@ -16,6 +16,7 @@ import (
 	"sentra/internal/image"
 	"sentra/internal/overlayfs"
 	rt "sentra/internal/runtime"
+	"sentra/internal/security"
 )
 
 // Options configure a build.
@@ -687,12 +688,19 @@ func (ex *executor) runExec(n Node, step config.Step, root string) error {
 	c := &rt.Container{
 		ID: fmt.Sprintf("build-%d-%s", n.Index, id),
 		// A build step must be able to write; the read-only rootfs default
-		// is a runtime concern, not a build-time one.
+		// is a runtime concern, not a build-time one. Syscall filtering
+		// still applies, so a build step cannot reach kernel internals
+		// either.
 		Rootfs:   root,
 		Cmd:      step.Argv,
 		Readonly: false,
 		Env:      env,
 		Cwd:      cwd,
+		Posture: security.Posture{
+			Rootless: os.Getuid() != 0,
+			Readonly: false,
+			Seccomp:  security.LevelDefault,
+		},
 	}
 	if err := rt.CreateBundle(c, rt.DefaultLimits()); err != nil {
 		return err
