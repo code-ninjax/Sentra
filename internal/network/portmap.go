@@ -2,12 +2,14 @@ package network
 
 // Published ports.
 //
-// A published port is two iptables rules: DNAT in the nat table to steer the
-// connection to the container, and an ACCEPT in FORWARD so the kernel lets
-// the redirected packet through. Both are added at container start and both
-// are removed at teardown — a leaked DNAT rule is a port that stays open to
-// the network after the container it belonged to is gone, which is the kind
-// of bug that should be impossible to write here.
+// A published port is four iptables rules: DNAT in PREROUTING for packets
+// arriving from elsewhere, DNAT in OUTPUT for packets the host itself sends
+// to localhost, source rewriting for loopback-originated packets, and an
+// ACCEPT in FORWARD so the kernel lets the redirected packet through. All
+// four are added at container start and all four are removed at teardown —
+// a leaked DNAT rule is a port that stays open to the network after the
+// container it belonged to is gone, which is the kind of bug that should be
+// impossible to write here.
 //
 // The rules are addressed by the same match that created them, so removal
 // does not depend on any stored state.
@@ -113,15 +115,36 @@ func (p PortMap) String() string {
 	return b.String()
 }
 
-// dnatRule is the nat-table rule steering a host port to the container.
-func (p PortMap) dnatRule(containerIP string) []string {
-	return []string{
-		"-t", "nat", "-A", "PREROUTING",
+// dnatRules steer a host port to the container. Packets arriving from
+// elsewhere traverse PREROUTING. Packets the host itself sends to localhost
+// traverse OUTPUT instead, and are matched there narrowly so they do not
+// redirect unrelated outbound traffic using the same host port.
+func (p PortMap) dnatRules(containerIP string) [][]string {
+	base := []string{
 		"-p", p.Protocol,
 		"--dport", strconv.Itoa(p.HostPort),
 		"-m", "comment", "--comment", "sentra:" + p.Protocol + ":" + strconv.Itoa(p.HostPort),
 		"-j", "DNAT",
 		"--to-destination", containerIP + ":" + strconv.Itoa(p.ContainerPort),
+	}
+	prerouting := append([]string{"-t", "nat", "-A", "PREROUTING"}, base...)
+	loopback := append([]string{"-t", "nat", "-A", "OUTPUT", "-d", "127.0.0.1"}, base...)
+	return [][]string{prerouting, loopback}
+}
+
+// hairpinRule rewrites the source of loopback-originated traffic after DNAT.
+// Without it, the container sees source 127.0.0.1 and tries to answer
+// through its own loopback interface, so the reply never returns through
+// the connection that reached it.
+func (p PortMap) hairpinRule(containerIP string) []string {
+	return []string{
+		"-t", "nat", "-A", "POSTROUTING",
+		"-s", "127.0.0.0/8",
+		"-d", containerIP,
+		"-p", p.Protocol,
+		"--dport", strconv.Itoa(p.ContainerPort),
+		"-m", "comment", "--comment", "sentra:" + p.Protocol + ":" + strconv.Itoa(p.HostPort),
+		"-j", "MASQUERADE",
 	}
 }
 
@@ -138,7 +161,8 @@ func (p PortMap) forwardRule(containerIP string) []string {
 
 // Publish opens a host port to a container.
 func Publish(cfg Config, pm PortMap, alloc Allocation) error {
-	for _, rule := range [][]string{pm.dnatRule(alloc.Address), pm.forwardRule(alloc.Address)} {
+	rules := append(pm.dnatRules(alloc.Address), pm.hairpinRule(alloc.Address), pm.forwardRule(alloc.Address))
+	for _, rule := range rules {
 		if err := checkRule(cfg, rule); err == nil {
 			continue // already published, perhaps by an earlier run
 		}
@@ -161,7 +185,8 @@ func Unpublish(cfg Config, pm PortMap) error {
 	}
 
 	var firstErr error
-	for _, rule := range [][]string{pm.dnatRule(alloc.Address), pm.forwardRule(alloc.Address)} {
+	rules := append(pm.dnatRules(alloc.Address), pm.hairpinRule(alloc.Address), pm.forwardRule(alloc.Address))
+	for _, rule := range rules {
 		del := append([]string{}, rule...)
 		for i, a := range del {
 			if a == "-A" {

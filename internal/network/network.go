@@ -78,6 +78,15 @@ func Setup(cfg Config) (netnsPath string, err error) {
 		return "", err
 	}
 
+	// An address claimed here must not survive a setup failure; otherwise a
+	// name collision or later bridge error permanently reduces the pool.
+	releaseAlloc := true
+	defer func() {
+		if releaseAlloc {
+			_ = Release(cfg.StateDir, cfg.ID)
+		}
+	}()
+
 	if err := EnsureBridge(cfg); err != nil {
 		return "", err
 	}
@@ -123,6 +132,9 @@ func Setup(cfg Config) (netnsPath string, err error) {
 	if err := EnableForwarding(cfg); err != nil {
 		return "", err
 	}
+	if err := EnableLoopbackForwarding(cfg); err != nil {
+		return "", err
+	}
 	if err := EnsureMasquerade(cfg); err != nil {
 		return "", err
 	}
@@ -132,6 +144,7 @@ func Setup(cfg Config) (netnsPath string, err error) {
 			return "", err
 		}
 	}
+	releaseAlloc = false
 	return netnsPath, nil
 }
 

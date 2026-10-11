@@ -181,6 +181,30 @@ func EnableForwarding(cfg Config) error {
 	return nil
 }
 
+// EnableLoopbackForwarding permits the kernel to route loopback-sourced
+// packets to a container after the published-port rules rewrite their
+// destination. Without it, a connection to 127.0.0.1 from the host never
+// completes even though DNAT matched. It is left enabled, like IP
+// forwarding, because removing a host-level setting during one container's
+// teardown could surprise unrelated traffic.
+func EnableLoopbackForwarding(cfg Config) error {
+	const path = "/proc/sys/net/ipv4/conf/all/route_localnet"
+	if cfg.DryRun {
+		if cfg.Out != nil {
+			fmt.Fprintf(cfg.Out, "$ write %s 1\n", path)
+		}
+		return nil
+	}
+	current, err := os.ReadFile(path)
+	if err == nil && strings.TrimSpace(string(current)) == "1" {
+		return nil
+	}
+	if err := os.WriteFile(path, []byte("1"), 0o644); err != nil {
+		return fmt.Errorf("enable ipv4 loopback forwarding (sysctl net.ipv4.conf.all.route_localnet=1): %w", err)
+	}
+	return nil
+}
+
 // EnsureMasquerade makes container traffic look like it came from the host,
 // so replies find their way back. The rule is idempotent.
 func EnsureMasquerade(cfg Config) error {

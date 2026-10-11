@@ -80,20 +80,33 @@ func TestPortMapReParsesFromState(t *testing.T) {
 	}
 }
 
-func TestDNATRuleTargetsTheContainer(t *testing.T) {
+func TestDNATRulesTargetTheContainer(t *testing.T) {
 	pm := PortMap{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"}
-	rule := strings.Join(pm.dnatRule("10.89.0.7"), " ")
+	rules := pm.dnatRules("10.89.0.7")
+	if len(rules) != 2 {
+		t.Fatalf("expected PREROUTING and OUTPUT DNAT rules, got %d", len(rules))
+	}
 
+	joined := strings.Join(rules[0], " ") + "\n" + strings.Join(rules[1], " ")
 	for _, want := range []string{
-		"-t nat", "-A PREROUTING", "-p tcp", "--dport 8080",
+		"-t nat", "-p tcp", "--dport 8080",
 		"-j DNAT", "--to-destination 10.89.0.7:80",
 	} {
-		if !strings.Contains(rule, want) {
-			t.Errorf("dnat rule missing %q:\n%s", want, rule)
+		if got := strings.Count(joined, want); got != 2 {
+			t.Errorf("expected %q in both DNAT rules, found %d:\n%s", want, got, joined)
 		}
 	}
-	if strings.Contains(rule, "MASQUERADE") {
-		t.Errorf("dnat rule should not masquerade:\n%s", rule)
+	if !strings.Contains(strings.Join(rules[0], " "), "-A PREROUTING") {
+		t.Errorf("first DNAT rule should handle arriving traffic:\n%s", strings.Join(rules[0], " "))
+	}
+	if !strings.Contains(strings.Join(rules[1], " "), "-A OUTPUT -d 127.0.0.1") {
+		t.Errorf("second DNAT rule should handle localhost traffic narrowly:\n%s", strings.Join(rules[1], " "))
+	}
+	if strings.Contains(strings.Join(rules[1], " "), "MASQUERADE") {
+		t.Errorf("loopback DNAT rule should not rewrite the source before routing:\n%s", strings.Join(rules[1], " "))
+	}
+	if strings.Contains(joined, "MASQUERADE") {
+		t.Errorf("dnat rules should not masquerade:\n%s", joined)
 	}
 }
 
@@ -109,6 +122,34 @@ func TestForwardRuleAllowsOnlyTheContainer(t *testing.T) {
 	}
 	if strings.Contains(rule, "-s ") {
 		t.Errorf("forward rule should not match on source:\n%s", rule)
+	}
+}
+
+func TestHairpinRuleRewritesLoopbackSource(t *testing.T) {
+	pm := PortMap{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"}
+	rule := strings.Join(pm.hairpinRule("10.89.0.7"), " ")
+
+	for _, want := range []string{
+		"-t nat", "-A POSTROUTING", "-s 127.0.0.0/8", "-d 10.89.0.7",
+		"-p tcp", "--dport 80", "-j MASQUERADE",
+	} {
+		if !strings.Contains(rule, want) {
+			t.Errorf("hairpin rule missing %q:\n%s", want, rule)
+		}
+	}
+	if strings.Contains(rule, "DNAT") {
+		t.Errorf("hairpin rule should rewrite the source, not the destination:\n%s", rule)
+	}
+}
+
+func TestLoopbackForwardingPlan(t *testing.T) {
+	cfg := Config{ID: "abc", StateDir: t.TempDir(), Out: &bytes.Buffer{}, DryRun: true}
+	if err := EnableLoopbackForwarding(cfg); err != nil {
+		t.Fatalf("EnableLoopbackForwarding: %v", err)
+	}
+	got := cfg.Out.(*bytes.Buffer).String()
+	if !strings.Contains(got, "/proc/sys/net/ipv4/conf/all/route_localnet") {
+		t.Errorf("expected loopback-forwarding setup, got:\n%s", got)
 	}
 }
 
