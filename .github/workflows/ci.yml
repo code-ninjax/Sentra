@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Install UPX
+        run: sudo apt-get update && sudo apt-get install -y upx
+
+      - name: Build release artifacts
+        run: bash scripts/build.sh --pack
+
+      - name: Report binary sizes
+        run: |
+          cat dist/sizes.txt
+          {
+            echo "## Release binary sizes"
+            echo
+            echo '```'
+            cat dist/sizes.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentra-linux-amd64
+          path: |
+            dist/sentra-linux-amd64
+            dist/sentra-linux-amd64-packed
+            dist/sizes.txt
