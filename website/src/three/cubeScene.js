@@ -15,7 +15,9 @@ export async function initCubeScene(opts) {
 
   const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2));
-  renderer.setSize(W(), H());
+  // updateStyle=false: CSS (width:100%) owns the display size — no inline
+  // px widths that could fight the layout on resize/orientation change
+  renderer.setSize(W(), H(), false);
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(42, W() / H(), 0.1, 100);
@@ -255,7 +257,7 @@ export async function initCubeScene(opts) {
     const h = H();
     camera.aspect = W() / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(W(), h);
+    renderer.setSize(W(), h, false);
   });
   ro.observe(stage);
 

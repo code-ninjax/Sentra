@@ -14,7 +14,8 @@ export async function initStackScene(opts) {
 
   const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2));
-  renderer.setSize(W(), H());
+  // updateStyle=false: CSS owns display size; avoids inline px overflow
+  renderer.setSize(W(), H(), false);
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(36, W() / H(), 0.1, 100);
@@ -197,7 +198,7 @@ export async function initStackScene(opts) {
     const h = H();
     camera.aspect = W() / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(W(), h);
+    renderer.setSize(W(), h, false);
   });
   ro.observe(stage);
 
