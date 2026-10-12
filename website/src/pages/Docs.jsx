@@ -173,6 +173,15 @@ export default function Docs() {
 
           <div className="docs-sidebar-footer">
             <a
+              href="/llms.txt"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="docs-sidebar-github"
+              style={{ marginBottom: "8px" }}
+            >
+              LLM & Agent Context (llms.txt) ↗
+            </a>
+            <a
               href="https://github.com/code-ninjax/Sentra"
               target="_blank"
               rel="noopener noreferrer"

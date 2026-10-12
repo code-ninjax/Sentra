@@ -1,0 +1,835 @@
+# Sentra Complete Documentation (LLM & Agent Full Context)
+Website: https://trysentra.tech
+Repository: https://github.com/code-ninjax/Sentra
+
+# Sentra — LLM & AI Agent Context
+
+> This document is designed for LLMs, AI agents (Claude, ChatGPT, Cursor, Copilot, Devin, etc.), and automated coding systems to understand, generate, and integrate Sentra containers without hallucinations.
+
+Sentra is a fast, lightweight, daemonless, OCI-compliant container runtime written in Go.
+- **Website & Docs:** https://trysentra.tech
+- **Repository:** https://github.com/code-ninjax/Sentra
+- **License:** Apache 2.0
+- **Binary:** Single static binary (~8 MB), zero background daemon (`dockerd`).
+
+---
+
+## 1. Core Principles for AI Agents
+
+When assisting users with Sentra:
+1. **No Daemon:** Never suggest running `systemctl start docker`, `dockerd`, or checking socket files (`/var/run/docker.sock`). Sentra executes directly using Linux namespaces and `runc`.
+2. **Build Configuration:** Use `Sentrafile` (NOT `Dockerfile`).
+3. **No Shell Wrapping in `exec` / `start`:** `exec` and `start` pass arguments directly to `argv`. There is no implicit `/bin/sh -c`. If shell features (pipes, chaining) are required, explicitly invoke `/bin/sh -c "..."`.
+4. **Security by Default:** Sentra runs rootless and with a read-only rootfs by default.
+
+---
+
+## 2. Dockerfile to Sentrafile Translation Rules
+
+When converting an existing Dockerfile to a Sentrafile, apply these exact 1-to-1 mappings:
+
+| Dockerfile Directive | Sentrafile Directive | Rules & Differences |
+|---|---|---|
+| `FROM <image> [AS <name>]` | `base <image> [as <name>]` | Case-insensitive. Required first line of any stage. |
+| `WORKDIR <path>` | `workdir <path>` | Must be an absolute path. Creates directory if missing. |
+| `COPY <src> <dest>` | `copy <src> <dest>` | Relative paths copy relative to `workdir`. |
+| `COPY --from=<stage> <src> <dest>` | `copy --from=<stage> <src> <dest>` | `--from` is the only supported flag in `copy`. |
+| `RUN <command>` | `exec <command>` | Executes command at build time. Argv format. |
+| `ENV <key>=<val>` | `env <key>=<val>` | Sets environment variables. Multiple key-value pairs allowed. |
+| `EXPOSE <port>` | `expose <port>` | Documents network port. |
+| `CMD ["cmd", "arg"]` / `ENTRYPOINT` | `start <cmd> [args...]` | Sets entrypoint. Exactly one `start` allowed in final stage. |
+| `USER`, `LABEL`, `VOLUME` | *(Omit or configure via CLI)* | Keep Sentrafile minimal and declarative. |
+
+### Syntax Grammar Rules for Sentrafile:
+- Directives are case-insensitive (`BASE` == `base`).
+- Full-line comments only using `#`. Mid-line `#` is treated as a literal character.
+- Blank lines are ignored.
+- Arguments use shell-like quoting (single quotes literal, double quotes escape backslashes).
+- **No variable expansion** (e.g., `$VAR` or `${VAR}` are NOT expanded by the parser).
+
+---
+
+## 3. Standard Sentrafile Recipes for AI Generation
+
+### A. Frontend / Static Web (React, Vite, Vue, Angular, Next static)
+```dockerfile
+# Stage 1: Build assets
+base node:20-alpine as builder
+workdir /app
+copy package.json package-lock.json ./
+exec npm install
+copy . .
+exec npm run build
+
+# Stage 2: Production Web Server
+base nginx:alpine
+copy --from=builder /app/dist /usr/share/nginx/html
+expose 80
+start nginx -g "daemon off;"
+```
+
+### B. Node.js / Express API
+```dockerfile
+base node:20-alpine
+workdir /app
+copy package.json package-lock.json ./
+exec npm install --production
+copy . .
+expose 3000
+start node server.js
+```
+
+### C. Python / FastAPI / Flask API
+```dockerfile
+base python:3.12-slim
+workdir /app
+copy requirements.txt .
+exec pip install --no-cache-dir -r requirements.txt
+copy . .
+expose 8000
+start python main.py
+```
+
+### D. Go Static Binary
+```dockerfile
+# Stage 1: Compile
+base golang:1.22 as builder
+workdir /src
+copy go.mod go.sum ./
+exec go mod download
+copy . .
+exec go build -ldflags="-w -s" -o /out/app .
+
+# Stage 2: Distroless/Alpine runtime
+base alpine:3.20
+exec apk add --no-cache ca-certificates
+copy --from=builder /out/app /usr/local/bin/app
+expose 8080
+start /usr/local/bin/app
+```
+
+---
+
+## 4. CLI Command Reference
+
+### Build an Image
+```sh
+sentra build -t <tag-name> <context-path>
+# Example:
+sentra build -t my-app .
+
+# Options:
+#   --file, -f <path>    Specify alternative Sentrafile path
+#   --no-cache           Force rebuild without layer cache
+#   --workers <n>        Parallel build worker count
+```
+
+### Run a Container
+```sh
+sentra run [options] -t <tag-name> [-- command args...]
+# or with Docker Hub image directly:
+sentra run [options] <image:tag> [-- command args...]
+
+# Common Options:
+#   -d                   Run detached in background
+#   -p <host>:<cont>     Publish port (e.g. -p 8080:80)
+#   --name <string>      Assign container name
+#   -e KEY=VAL           Set environment variable (comma-separated or repeated)
+#   --memory <mb>        Limit memory in megabytes
+#   --cpus <float>       Limit CPU cores
+#   --rw                 Writable rootfs (default is read-only)
+#   --security strict    Enforce strict seccomp profile
+```
+
+### Manage Containers
+```sh
+# List running containers
+sentra ps
+
+# Stream container logs
+sentra logs -f <container-name-or-id>
+
+# Run shell inside a running container
+sentra exec -it <container-name-or-id> -- /bin/sh
+
+# Stop container
+sentra stop <container-name-or-id>
+
+# Remove container
+sentra rm <container-name-or-id>
+sentra rm -f <container-name-or-id>   # Force remove running container
+```
+
+### Image Management & Registries
+```sh
+# List local images
+sentra images
+
+# Pull image from Docker Hub / GHCR
+sentra pull <image:tag>
+
+# Push image to registry
+sentra push <local-tag> [remote-dest]
+# Example:
+sentra push my-app ghcr.io/myorg/my-app:v1.0
+```
+
+---
+
+## 5. CI/CD Integration Examples
+
+### GitHub Actions
+```yaml
+name: CI
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Sentra
+        run: |
+          curl -fsSL https://trysentra.tech/install.sh | sh
+          sentra --version
+      - name: Build Container
+        run: sentra build -t myapp:${{ github.sha }} .
+```
+
+---
+
+## 6. Full Documentation Links
+- Full Text Feed: https://trysentra.tech/llms-full.txt
+- Quickstart Guide: https://trysentra.tech/#/docs/quickstart
+- Sentrafile Syntax: https://trysentra.tech/#/docs/sentrafile
+- Sentra vs Docker vs Podman: https://trysentra.tech/#/docs/comparison
+- Architecture & Internals: https://trysentra.tech/#/docs/architecture
+
+
+---
+# Part 1: Quickstart Guide
+
+# Quickstart Guide
+
+Get up and running with Sentra in under 60 seconds. No background daemon, no complicated setup, no background services eating your RAM.
+
+---
+
+## 1. Install Sentra (10 Seconds)
+
+Sentra is a single, static binary (~8 MB). Run this in your terminal:
+
+```sh
+curl -fsSL https://trysentra.tech/install.sh | sh
+```
+
+Verify it's working:
+
+```sh
+sentra --version
+```
+
+> **Why this is different from Docker:** You do **not** need to start a service (`sudo systemctl start docker` or open Docker Desktop). Sentra runs directly as a command and exits when finished.
+
+---
+
+## 2. Run Any Existing Image
+
+Sentra natively speaks OCI. It can pull and run any existing image from Docker Hub:
+
+```sh
+# Run a quick command and exit
+sentra run alpine echo "Hello from Sentra!"
+
+# Start an Nginx web server on port 8080
+sentra run -d -p 8080:80 --name my-web nginx:alpine
+```
+
+Open **`http://localhost:8080`** in your browser. You're running a container!
+
+---
+
+## 3. Containerize Your Own Project
+
+To package your app, create a file named `Sentrafile` in your project root. A `Sentrafile` is just a list of instructions on how to build and run your code.
+
+### Recipe A: Frontend App (React, Vite, Vue, Next static)
+
+Build your production assets and serve them with a fast Nginx web server:
+
+```dockerfile
+# Step 1: Install packages and build static files
+base node:20-alpine as builder
+workdir /app
+copy package.json package-lock.json ./
+exec npm install
+copy . .
+exec npm run build
+
+# Step 2: Serve the build folder with Nginx
+base nginx:alpine
+copy --from=builder /app/dist /usr/share/nginx/html
+expose 80
+start nginx -g "daemon off;"
+```
+
+*(If your project outputs to `build` instead of `dist`, change `/app/dist` to `/app/build`)*.
+
+---
+
+### Recipe B: Node.js / Express Backend API
+
+```dockerfile
+base node:20-alpine
+workdir /app
+
+# Install dependencies first (cached for fast builds)
+copy package.json package-lock.json ./
+exec npm install --production
+
+# Copy application source code
+copy . .
+
+expose 3000
+start node server.js
+```
+
+---
+
+### Recipe C: Python / FastAPI / Flask API
+
+```dockerfile
+base python:3.12-slim
+workdir /app
+
+# Install requirements
+copy requirements.txt .
+exec pip install --no-cache-dir -r requirements.txt
+
+# Copy application source code
+copy . .
+
+expose 8000
+start python main.py
+```
+
+---
+
+## 4. Build & Run Your App
+
+Once your `Sentrafile` is in your project directory:
+
+### Step 1: Build the image
+
+```sh
+sentra build -t my-app .
+```
+
+*What this does:* Sentra reads your `Sentrafile`, downloads layers in parallel, executes your build steps, and tags the output as `my-app`.
+
+### Step 2: Run the container
+
+```sh
+sentra run -d -p 8080:80 --name my-running-app -t my-app
+```
+
+*In plain English:*
+- `-d` = Run in the background (detached), so your terminal stays free.
+- `-p 8080:80` = Maps port `8080` on your machine to port `80` inside the container.
+- `--name my-running-app` = Gives the container a nickname so you can manage it.
+- `-t my-app` = Tells Sentra which built image to run.
+
+Open **`http://localhost:8080`** in your browser to view your live app!
+
+---
+
+## 5. The 5 Everyday Commands You Need
+
+You only need five commands for 99% of your daily workflow:
+
+| What you want to do | The Command |
+|---|---|
+| **Build your app** | `sentra build -t <app-name> .` |
+| **Run your app on a port** | `sentra run -d -p 8080:80 --name <container-name> -t <app-name>` |
+| **See running containers** | `sentra ps` |
+| **View live logs** | `sentra logs -f <container-name>` |
+| **Stop a container** | `sentra stop <container-name>` |
+
+### Additional helpful commands:
+- **Run a shell inside a container:** `sentra exec -it <container-name> -- /bin/sh`
+- **List your images:** `sentra images`
+- **Remove a stopped container:** `sentra rm <container-name>`
+
+---
+
+## 6. Where and Why to Use Sentra (Real Use Cases)
+
+Sentra was built to replace heavyweight container engines in everyday development:
+
+### 1. Everyday Local Web & App Development
+- **No background battery drain:** Docker Desktop consumes 2–4 GB of RAM and drains laptop battery even when you aren't running anything. Sentra has no background daemon; it only uses CPU/RAM when your container is actually executing.
+- **Instant startup:** You don't wait for a virtual machine or daemon to boot up.
+
+### 2. Fast CI/CD Pipelines (GitHub Actions, GitLab CI)
+- **Zero Docker-in-Docker headaches:** In CI runners, Docker requires privileged root access or complex DinD setups. Sentra runs as an unprivileged static binary, saving setup time and improving pipeline security.
+- **Parallel layer caching:** Sentra builds multi-stage pipelines with a parallel DAG scheduler.
+
+### 3. Edge Computing & Low-Spec Cloud VPS
+- If you deploy to a \$5/mo VPS (1GB RAM on DigitalOcean, Hetzner, Linode) or a Raspberry Pi, Docker's daemon overhead takes up a noticeable chunk of system memory.
+- Sentra uses **0 MB of idle memory**. When your containers aren't running, Sentra uses zero resources.
+
+### 4. Microservices & Isolated Test Suites
+- Spin up ephemeral Redis, PostgreSQL, or mock services during unit and integration test runs, run the test, and tear them down in milliseconds without socket pollution.
+
+---
+
+## Next Steps
+
+- Check out [Sentrafile syntax](/#/docs/sentrafile) for the complete list of directives and build options.
+- Read [Sentra vs Docker vs Podman](/#/docs/comparison) to see how Sentra compares under the hood.
+
+
+---
+# Part 2: Sentrafile Syntax Specification
+
+# Sentrafile Syntax Reference
+
+A `Sentrafile` is the recipe for building a container image with Sentra. It is clean, predictable, and has no hidden shell wrappers.
+
+---
+
+## The Docker-to-Sentra Cheat Sheet
+
+If you already know how to write a `Dockerfile`, you already know 90% of a `Sentrafile`:
+
+| Docker Directive | Sentra Directive | What it does | Example |
+|---|---|---|---|
+| `FROM` | `base` | Chooses the starting image | `base node:20-alpine` |
+| `WORKDIR` | `workdir` | Sets the folder inside the container | `workdir /app` |
+| `COPY` | `copy` | Copies files from your machine into the container | `copy package.json ./` |
+| `RUN` | `exec` | Runs a command during build time | `exec npm install` |
+| `ENV` | `env` | Sets environment variables | `env PORT=8080 NODE_ENV=production` |
+| `EXPOSE` | `expose` | Documents network ports | `expose 8080` |
+| `CMD` / `ENTRYPOINT` | `start` | The command that starts when container runs | `start node server.js` |
+
+---
+
+## Directives in Detail
+
+### 1. `base <image> [as <name>]`
+Specifies the base image to build on top of. Can be any standard image from Docker Hub or GHCR.
+
+```dockerfile
+# Start from Alpine Linux
+base alpine:3.20
+
+# Start a multi-stage builder
+base golang:1.22 as builder
+```
+
+---
+
+### 2. `workdir <path>`
+Sets the current working directory for subsequent `copy` and `exec` commands. The folder is automatically created if it does not exist.
+
+```dockerfile
+workdir /app
+```
+
+---
+
+### 3. `copy [--from=<stage>] <source> <destination>`
+Copies files or folders from your computer into the container rootfs.
+
+```dockerfile
+# Copy local package files
+copy package.json package-lock.json ./
+
+# Copy everything from current folder
+copy . .
+
+# Copy built files from an earlier build stage
+copy --from=builder /app/dist /usr/share/nginx/html
+```
+
+---
+
+### 4. `exec <command> [args...]`
+Runs a command to install dependencies, compile code, or prepare files during the image build.
+
+```dockerfile
+exec npm install
+exec apk add --no-cache curl
+exec python -m pip install -r requirements.txt
+```
+
+---
+
+### 5. `env KEY=VALUE ...`
+Sets one or more environment variables inside the container.
+
+```dockerfile
+env NODE_ENV=production PORT=3000
+```
+
+---
+
+### 6. `expose <port>`
+Declares which network port the application listens on.
+
+```dockerfile
+expose 3000
+expose 80 443
+```
+
+---
+
+### 7. `start <command> [args...]`
+Specifies what command to run when the container starts up.
+
+```dockerfile
+start node index.js
+start python app.py
+start /usr/local/bin/server
+```
+
+---
+
+### 8. `secure rootless=<bool> readonly=<bool> seccomp=<default|strict>`
+*(Optional)* Declares the security profile for your image. By default, Sentra is already rootless and secure.
+
+```dockerfile
+secure rootless=true readonly=true seccomp=default
+```
+
+---
+
+## Complete Multi-Stage Example
+
+Multi-stage builds allow you to use heavy tools (Node compilers, Go compilers, build tools) to build your app, and then copy only the lightweight compiled output into a tiny, secure production image:
+
+```dockerfile
+# ================= Stage 1: Build =================
+base node:20-alpine as builder
+workdir /app
+
+# Cache dependencies
+copy package.json package-lock.json ./
+exec npm install
+
+# Copy source and build
+copy . .
+exec npm run build
+
+# ================= Stage 2: Production ============
+base nginx:alpine
+
+# Copy ONLY the static build output from Stage 1
+copy --from=builder /app/dist /usr/share/nginx/html
+
+expose 80
+start nginx -g "daemon off;"
+```
+
+---
+
+## Validating Your Sentrafile
+
+Before building, you can verify that your `Sentrafile` has no syntax errors using:
+
+```sh
+sentra config Sentrafile
+```
+
+To just check for a pass/fail confirmation:
+
+```sh
+sentra config -q Sentrafile
+# Prints: ok
+```
+
+
+---
+# Part 3: Sentra vs Docker vs Podman
+
+# Sentra vs Docker vs Podman
+
+A feature-by-feature comparison based on what Sentra actually ships today.
+
+## Feature matrix
+
+| | Sentra | Docker | Podman |
+|---|---|---|---|
+| **Daemon** | No — CLI forks into namespaces directly | Yes (`dockerd`) | No — forks into namespaces |
+| **OCI image support** | Yes (`go-containerregistry`) | Yes | Yes |
+| **Runtime** | Wraps `runc` | Wraps `runc` (via containerd) | Wraps `runc` |
+| **Rootless by default** | Yes — user namespace unless root | No (rootful by default; rootless mode exists) | Yes |
+| **Read-only rootfs by default** | Yes | No | No |
+| **Seccomp by default** | Yes (`default` allowlist) | Yes (Docker default profile) | Yes (containers.conf) |
+| **cgroups version** | v2 only | v1 and v2 | v1 and v2 |
+| **Storage driver** | overlayfs only | overlayfs, aufs, btrfs, zfs, devicemapper… | overlayfs, native, btrfs, zfs… |
+| **Network drivers** | One (bridge + NAT) | bridge, host, overlay, macvlan, none… | bridge, host, macvlan, slirp4netns, pasta… |
+| **Rootless networking** | Loopback only (run with `sudo` for bridge) | slirp4netns | slirp4netns, pasta |
+| **Build format** | `Sentrafile` (no shell, argv exec) | Dockerfile (shell by default) | Containerfile / Dockerfile |
+| **Build cache** | Content-addressed, overlayfs-native (no tar round-trip) | BuildKit layer cache | Buildah layer cache |
+| **Multi-stage builds** | Yes (`base … as`, `copy --from=`) | Yes | Yes |
+| **Manual cache control** | `cache key=<value>` directive | `--cache-from`, `RUN --mount=type=cache` | Buildah equivalents |
+| **Port publishing** | `-p 8080:80`, auto-publishes `expose`d ports | `-p 8080:80`, `expose` is metadata only | `-p 8080:80`, `expose` is metadata only |
+| **Image push** | `sentra push TAG [DEST]` | `docker push` | `podman push` |
+| **State storage** | Plain JSON files under `/var/lib/sentra` or `~/.sentra` | containerd + SQLite/bolt | boltdb + JSON |
+| **Language** | Pure Go (`CGO_ENABLED=0`) | Go (with cgo) | Go (with cgo) |
+| **Binary size (target)** | 8–15 MiB unpacked, 3.5–4.5 MiB UPX-packed | ~60 MiB+ (dockerd + CLI) | ~20–30 MiB |
+
+## Design differences
+
+### No daemon, no socket
+
+Sentra runs exactly like `podman`: the CLI process is the container's parent.
+There is no `dockerd`-style service, no API socket, no long-running process to
+babysit. Every command is a short-lived process that sets up namespaces,
+invokes `runc`, and exits.
+
+### Sentrafile is not a Dockerfile
+
+The `Sentrafile` format is deliberately stripped down:
+
+- **No shell.** `exec` and `start` take argv, not a shell string. `exec apk add
+  curl` runs `apk` with `[add, curl]` — no `/bin/sh -c` wrapper.
+- **No per-instruction flags.** `copy --from=` is the only flag in the format.
+  Everything else is positional.
+- **No variable expansion, globbing, or command substitution.** Those belong to
+  `exec`'s argv, not the parser.
+
+The tradeoff is clarity: a `Sentrafile` is a *build plan*, not a script. The
+parser turns it into a flat ordered list of steps and nothing downstream
+re-reads the raw text.
+
+### Overlayfs-native caching
+
+Sentra's build cache never tars and untars. The base image's extracted layer
+directories are the overlay lowerdirs; each mutating step gets a fresh
+upperdir. Whatever the step writes is the diff, and that diff is the cache
+entry. A cached `copy` costs one directory lookup, never a filesystem copy.
+
+### Security defaults are strict
+
+Sentra's baseline posture is rootless, read-only rootfs, and seccomp on. A
+`Sentrafile`'s `secure` directive is recorded at build time and inherited by
+`sentra run -t`, so an image's security travels with it rather than being
+re-declared on every run.
+
+### One network, one storage driver
+
+Sentra ships exactly one bridge (`sentra0`, `10.89.0.0/24`) and one storage
+driver (overlayfs). There is no driver abstraction, no plugin system, and no
+fallback matrix. If a workload needs macvlan or zfs, it does not need Sentra.
+
+## What Sentra does not do (yet, or ever)
+
+Per the project's non-negotiable constraints and roadmap:
+
+- No CRIU snapshot/restore.
+- No eBPF-based auto-seccomp or live metrics.
+- No AI-powered features.
+- No built-in micro-distro synthesizer.
+- No GPU support, no multiple network/storage drivers.
+- cgroups v1 will not be supported.
+
+These are intentional scope cuts, not missing features.
+
+
+---
+# Part 4: Architecture & Internals
+
+# Architecture & Internals
+
+> **Note:** This section is an in-depth reference for contributors and engineers curious about how Sentra works under the hood. If you just want to containerize and run your application, check out the [Quickstart Guide](/#/docs/quickstart) instead.
+
+Sentra is a single static Go binary (`CGO_ENABLED=0`) with no background daemon. The CLI forks directly into Linux namespaces, wraps `runc` for container execution, and stores all state as plain files. No background service, no socket, and no memory overhead when idle.
+
+## Component diagram
+
+```mermaid
+graph TD
+    CLI["cmd/sentra/main.go<br/>entrypoint + dispatch"]
+
+    CLI --> CLI_PKG["internal/cli<br/>run · build · pull · push<br/>images · ps · stop · rm<br/>logs · exec · config"]
+
+    CLI_PKG --> CONFIG["internal/config<br/>Sentrafile parser"]
+    CLI_PKG --> BUILD["internal/build<br/>DAG · cache · executor · push"]
+    CLI_PKG --> RUNTIME["internal/runtime<br/>runc wrapper · spec · state store"]
+    CLI_PKG --> IMAGE["internal/image<br/>OCI pull/push · registry"]
+    CLI_PKG --> NETWORK["internal/network<br/>bridge · portmap · NAT"]
+
+    CONFIG -->|"Plan (stages + security)"| BUILD
+    BUILD --> IMAGE
+    BUILD --> OVERLAYFS["internal/overlayfs<br/>mount · layer store"]
+    BUILD --> RUNTIME
+    RUNTIME --> SECURITY["internal/security<br/>rootless · seccomp · hardening"]
+    RUNTIME --> OVERLAYFS
+    IMAGE --> OVERLAYFS
+    CLI_PKG --> SECURITY
+
+    RUNTIME --> RUNC["runc (external)"]
+    NETWORK --> HOST["ip · iptables (external)"]
+    IMAGE --> REGISTRY["Docker Hub · GHCR (OCI)"]
+```
+
+## Package-by-package
+
+### `cmd/sentra`
+
+Thin entrypoint. Parses the subcommand and dispatches to the matching
+`internal/cli` function. No logic lives here.
+
+### `internal/cli`
+
+Command implementations. Each command is a single `Cmd(args []string) error`
+function that:
+
+1. Parses flags with the stdlib `flag` package.
+2. Calls into the relevant `internal/*` package.
+3. Formats and prints the result.
+
+The `run` command is the most complex: it resolves the rootfs (from `--rootfs`
+or `-t TAG`), merges the image's recorded env/expose/entrypoint with explicit
+flags, sets up networking, builds an OCI spec via `runtime.BuildSpec`, creates
+a runc bundle, and invokes `runc run` (foreground) or `runc create` + `runc
+start` (detached).
+
+### `internal/config`
+
+The `Sentrafile` parser. Turns raw bytes into a `Plan` (one or more `Stage`s
+plus a `Security` posture). Each stage is a `base` image plus an ordered list
+of `Step`s. The parser validates syntax, stage references, and the
+`cache`/`secure` invariants. Nothing downstream re-reads the raw text.
+
+### `internal/build`
+
+The build engine. The execution model is **overlayfs-native**:
+
+1. The base image's extracted layer directories become the overlay lowerdirs.
+2. Each mutating step (`copy`, `exec`) gets a fresh upperdir mounted over the
+   accumulated chain.
+3. Whatever the step writes lands in that upperdir — exactly the diff worth
+   caching. No tar/untar round-trip.
+
+Key pieces:
+
+- **`dag.go`** — turns a stage's steps into a dependency graph. Independent
+  steps run concurrently (bounded by `--workers`).
+- **`cache.go`** — content-addressed layer cache. A step's key is
+  `sha256(step type, canonical args, parent layer id, input file hashes)`.
+  `copy` steps are auto-cached; `exec` steps only via an explicit
+  `cache key=` override.
+- **`executor.go`** — drives the build stage by stage, mounts per-step
+  overlays, runs `exec` steps through `runc`, and assembles the final merged
+  rootfs.
+- **`push.go`** — packs build layers into gzipped OCI tarballs for registry
+  upload.
+
+### `internal/runtime`
+
+The container runtime layer:
+
+- **`container.go`** — `Container` record (persisted as JSON), `BuildSpec`
+  (produces the OCI `config.json`), the state store (`SaveContainer`,
+  `LoadContainer`, `ListContainers`, `RemoveContainer`), and state-dir
+  resolution (`/var/lib/sentra` root, `~/.sentra` rootless).
+- **`runc.go`** — wraps the `runc` binary: `Run`, `Detach`, `Exec`, `Kill`,
+  `State`, `Delete`.
+- **`namespace.go`** / **`cgroups.go`** — declare the Linux namespaces and
+  cgroups v2 resources that go into the OCI spec.
+
+### `internal/image`
+
+OCI image operations, backed by `go-containerregistry`:
+
+- **`pull.go`** — resolves a reference, fetches the manifest and layers
+  (content-addressed, digest-verified), extracts layers to `layers/<digest>/`,
+  and merges them into `rootfs/<name>/`.
+- **`push.go`** — assembles the base image plus build layers into an OCI
+  image and writes it to a registry. Auth via `SENTRA_REGISTRY_TOKEN`.
+- **`registry.go`** — registry client setup.
+
+### `internal/overlayfs`
+
+Storage layer:
+
+- **`layer_store.go`** — `LayerDir`, `HasLayer`, `Merge` (stack lowerdirs into
+  a merged rootfs).
+- **`mount.go`** — `MountStep` (mount a lower chain + fresh upperdir for a
+  build step), `Probe` (test whether overlayfs works here), `CopyTree`
+  (fallback when overlayfs is unavailable).
+
+If overlayfs is unavailable (e.g. non-root without a usable user namespace),
+builds degrade to a single writable rootfs copy with no layer caching.
+
+### `internal/security`
+
+Security posture enforcement:
+
+- **`security.go`** — `Posture` (rootless, readonly, seccomp), `Apply` writes
+  the posture into an OCI spec: rootfs readonly flag, masked/readonly paths
+  (rootful only), and the seccomp profile.
+- **`seccomp.go`** — emits the OCI seccomp profile JSON (no libseccomp — pure
+  Go). Three levels: `unconfined`, `default` (broad allowlist), `strict`
+  (default minus kernel/module/device syscalls).
+- **`rootless.go`** — user-namespace ID mappings from `/etc/subuid` and
+  `/etc/subgid`.
+
+### `internal/network`
+
+One bridge, one subnet:
+
+- **`bridge.go`** — `sentra0` bridge on `10.89.0.0/24`, address allocation
+  (claimed by writing to `network/allocations.json`), bridge creation, IP
+  forwarding, masquerade.
+- **`network.go`** — `Setup`/`Teardown`: create a netns, a veth pair, attach
+  the host end to the bridge, assign an address, set the default route, and
+  add DNAT rules for published ports. Invokes `ip` and `iptables`.
+- **`portmap.go`** — parses `-p` syntax (`8080`, `8080:80`, `8080:80/udp`)
+  and builds the four iptables rules per published port (PREROUTING DNAT,
+  OUTPUT DNAT for localhost, hairpin MASQUERADE, FORWARD ACCEPT).
+
+## Data flow: `sentra build`
+
+```
+Sentrafile ──config.Parse──▶ Plan (stages + security)
+                                   │
+                                   ▼
+                          build.Build (executor)
+                                   │
+            ┌──────────────────────┼──────────────────────┐
+            ▼                      ▼                      ▼
+      image.Pull             overlayfs.MountStep    cache.Lookup
+   (base image layers)    (per-step upperdir)       (content key)
+                                   │
+                                   ▼
+                          runc run (exec steps)
+                                   │
+                                   ▼
+                       overlayfs.Merge (final rootfs)
+                                   │
+                                   ▼
+                     built/<tag>.json + built/<tag>-rootfs
+```
+
+## Data flow: `sentra run`
+
+```
+--rootfs or -t TAG ──▶ resolve rootfs + entrypoint + env + expose
+                                   │
+                                   ▼
+                     security posture (defaults + secure directive + flags)
+                                   │
+                                   ▼
+                          network.Setup (rootful)
+                     (sentra0 bridge, veth, NAT, DNAT)
+                                   │
+                                   ▼
+                         runtime.BuildSpec (OCI config.json)
+                                   │
+                                   ▼
+                           runc run / runc create+start
+```
+

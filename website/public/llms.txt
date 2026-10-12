@@ -1,0 +1,201 @@
+# Sentra — LLM & AI Agent Context
+
+> This document is designed for LLMs, AI agents (Claude, ChatGPT, Cursor, Copilot, Devin, etc.), and automated coding systems to understand, generate, and integrate Sentra containers without hallucinations.
+
+Sentra is a fast, lightweight, daemonless, OCI-compliant container runtime written in Go.
+- **Website & Docs:** https://trysentra.tech
+- **Repository:** https://github.com/code-ninjax/Sentra
+- **License:** Apache 2.0
+- **Binary:** Single static binary (~8 MB), zero background daemon (`dockerd`).
+
+---
+
+## 1. Core Principles for AI Agents
+
+When assisting users with Sentra:
+1. **No Daemon:** Never suggest running `systemctl start docker`, `dockerd`, or checking socket files (`/var/run/docker.sock`). Sentra executes directly using Linux namespaces and `runc`.
+2. **Build Configuration:** Use `Sentrafile` (NOT `Dockerfile`).
+3. **No Shell Wrapping in `exec` / `start`:** `exec` and `start` pass arguments directly to `argv`. There is no implicit `/bin/sh -c`. If shell features (pipes, chaining) are required, explicitly invoke `/bin/sh -c "..."`.
+4. **Security by Default:** Sentra runs rootless and with a read-only rootfs by default.
+
+---
+
+## 2. Dockerfile to Sentrafile Translation Rules
+
+When converting an existing Dockerfile to a Sentrafile, apply these exact 1-to-1 mappings:
+
+| Dockerfile Directive | Sentrafile Directive | Rules & Differences |
+|---|---|---|
+| `FROM <image> [AS <name>]` | `base <image> [as <name>]` | Case-insensitive. Required first line of any stage. |
+| `WORKDIR <path>` | `workdir <path>` | Must be an absolute path. Creates directory if missing. |
+| `COPY <src> <dest>` | `copy <src> <dest>` | Relative paths copy relative to `workdir`. |
+| `COPY --from=<stage> <src> <dest>` | `copy --from=<stage> <src> <dest>` | `--from` is the only supported flag in `copy`. |
+| `RUN <command>` | `exec <command>` | Executes command at build time. Argv format. |
+| `ENV <key>=<val>` | `env <key>=<val>` | Sets environment variables. Multiple key-value pairs allowed. |
+| `EXPOSE <port>` | `expose <port>` | Documents network port. |
+| `CMD ["cmd", "arg"]` / `ENTRYPOINT` | `start <cmd> [args...]` | Sets entrypoint. Exactly one `start` allowed in final stage. |
+| `USER`, `LABEL`, `VOLUME` | *(Omit or configure via CLI)* | Keep Sentrafile minimal and declarative. |
+
+### Syntax Grammar Rules for Sentrafile:
+- Directives are case-insensitive (`BASE` == `base`).
+- Full-line comments only using `#`. Mid-line `#` is treated as a literal character.
+- Blank lines are ignored.
+- Arguments use shell-like quoting (single quotes literal, double quotes escape backslashes).
+- **No variable expansion** (e.g., `$VAR` or `${VAR}` are NOT expanded by the parser).
+
+---
+
+## 3. Standard Sentrafile Recipes for AI Generation
+
+### A. Frontend / Static Web (React, Vite, Vue, Angular, Next static)
+```dockerfile
+# Stage 1: Build assets
+base node:20-alpine as builder
+workdir /app
+copy package.json package-lock.json ./
+exec npm install
+copy . .
+exec npm run build
+
+# Stage 2: Production Web Server
+base nginx:alpine
+copy --from=builder /app/dist /usr/share/nginx/html
+expose 80
+start nginx -g "daemon off;"
+```
+
+### B. Node.js / Express API
+```dockerfile
+base node:20-alpine
+workdir /app
+copy package.json package-lock.json ./
+exec npm install --production
+copy . .
+expose 3000
+start node server.js
+```
+
+### C. Python / FastAPI / Flask API
+```dockerfile
+base python:3.12-slim
+workdir /app
+copy requirements.txt .
+exec pip install --no-cache-dir -r requirements.txt
+copy . .
+expose 8000
+start python main.py
+```
+
+### D. Go Static Binary
+```dockerfile
+# Stage 1: Compile
+base golang:1.22 as builder
+workdir /src
+copy go.mod go.sum ./
+exec go mod download
+copy . .
+exec go build -ldflags="-w -s" -o /out/app .
+
+# Stage 2: Distroless/Alpine runtime
+base alpine:3.20
+exec apk add --no-cache ca-certificates
+copy --from=builder /out/app /usr/local/bin/app
+expose 8080
+start /usr/local/bin/app
+```
+
+---
+
+## 4. CLI Command Reference
+
+### Build an Image
+```sh
+sentra build -t <tag-name> <context-path>
+# Example:
+sentra build -t my-app .
+
+# Options:
+#   --file, -f <path>    Specify alternative Sentrafile path
+#   --no-cache           Force rebuild without layer cache
+#   --workers <n>        Parallel build worker count
+```
+
+### Run a Container
+```sh
+sentra run [options] -t <tag-name> [-- command args...]
+# or with Docker Hub image directly:
+sentra run [options] <image:tag> [-- command args...]
+
+# Common Options:
+#   -d                   Run detached in background
+#   -p <host>:<cont>     Publish port (e.g. -p 8080:80)
+#   --name <string>      Assign container name
+#   -e KEY=VAL           Set environment variable (comma-separated or repeated)
+#   --memory <mb>        Limit memory in megabytes
+#   --cpus <float>       Limit CPU cores
+#   --rw                 Writable rootfs (default is read-only)
+#   --security strict    Enforce strict seccomp profile
+```
+
+### Manage Containers
+```sh
+# List running containers
+sentra ps
+
+# Stream container logs
+sentra logs -f <container-name-or-id>
+
+# Run shell inside a running container
+sentra exec -it <container-name-or-id> -- /bin/sh
+
+# Stop container
+sentra stop <container-name-or-id>
+
+# Remove container
+sentra rm <container-name-or-id>
+sentra rm -f <container-name-or-id>   # Force remove running container
+```
+
+### Image Management & Registries
+```sh
+# List local images
+sentra images
+
+# Pull image from Docker Hub / GHCR
+sentra pull <image:tag>
+
+# Push image to registry
+sentra push <local-tag> [remote-dest]
+# Example:
+sentra push my-app ghcr.io/myorg/my-app:v1.0
+```
+
+---
+
+## 5. CI/CD Integration Examples
+
+### GitHub Actions
+```yaml
+name: CI
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Sentra
+        run: |
+          curl -fsSL https://trysentra.tech/install.sh | sh
+          sentra --version
+      - name: Build Container
+        run: sentra build -t myapp:${{ github.sha }} .
+```
+
+---
+
+## 6. Full Documentation Links
+- Full Text Feed: https://trysentra.tech/llms-full.txt
+- Quickstart Guide: https://trysentra.tech/#/docs/quickstart
+- Sentrafile Syntax: https://trysentra.tech/#/docs/sentrafile
+- Sentra vs Docker vs Podman: https://trysentra.tech/#/docs/comparison
+- Architecture & Internals: https://trysentra.tech/#/docs/architecture
