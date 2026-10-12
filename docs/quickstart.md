@@ -1,235 +1,178 @@
-# Quickstart
+# Quickstart Guide
 
-This guide walks through Sentra's core workflow: pull an image, build from a
-`Sentrafile`, run it, push it, and manage containers.
+Get up and running with Sentra in under 60 seconds. No background daemon, no complicated setup, no background services eating your RAM.
 
-## Prerequisites
+---
 
-- **Linux** with `runc` on `PATH` (Sentra wraps `runc` for container starts).
-- **Go 1.25** to build from source.
-- **Root** (or `sudo`) for outbound networking and port publishing — rootless
-  runs get loopback only.
-- `ip` and `iptables` on `PATH` for networking.
+## 1. Install Sentra (10 Seconds)
 
-## Build Sentra
+Sentra is a single, static binary (~8 MB). Run this in your terminal:
 
 ```sh
-git clone <repo>
-cd sentra
-
-# dev build
-go build -o sentra ./cmd/sentra
-
-# release build (stripped, reproducible, size-budget gated)
-bash scripts/build.sh
-# → dist/sentra-linux-amd64
-
-# release build with UPX compression
-bash scripts/build.sh --pack
-# → dist/sentra-linux-amd64-packed
+curl -fsSL https://trysentra.tech/install.sh | sh
 ```
 
-## 1. Pull an image
-
-`sentra pull` fetches an OCI image from Docker Hub or GHCR, extracts its
-layers, and merges them into a rootfs directory.
+Verify it's working:
 
 ```sh
-sudo ./sentra pull alpine:latest
+sentra --version
 ```
 
-Output:
+> **Why this is different from Docker:** You do **not** need to start a service (`sudo systemctl start docker` or open Docker Desktop). Sentra runs directly as a command and exits when finished.
 
-```
-pulling docker.io/library/alpine:latest@sha256:...
-  layer 1/1 fetching ... (xxx bytes)...
-rootfs ready: /var/lib/sentra/rootfs/alpine-latest
-```
+---
 
-The merged rootfs is at the printed path, ready for `sentra run --rootfs`.
+## 2. Run Any Existing Image
 
-## 2. Run a container
-
-Run a one-off command against the pulled rootfs:
+Sentra natively speaks OCI. It can pull and run any existing image from Docker Hub:
 
 ```sh
-sudo ./sentra run --rootfs /var/lib/sentra/rootfs/alpine-latest -- /bin/echo hello
+# Run a quick command and exit
+sentra run alpine echo "Hello from Sentra!"
+
+# Start an Nginx web server on port 8080
+sentra run -d -p 8080:80 --name my-web nginx:alpine
 ```
 
-Sentra reports the security posture on stderr:
+Open **`http://localhost:8080`** in your browser. You're running a container!
 
-```
-sentra: rootless, read-only rootfs, seccomp=default
-hello
-```
+---
 
-### Common `run` flags
+## 3. Containerize Your Own Project
 
-```sh
-# detached background container
-sudo ./sentra run -d --rootfs /var/lib/sentra/rootfs/alpine-latest -- /bin/sleep 60
+To package your app, create a file named `Sentrafile` in your project root. A `Sentrafile` is just a list of instructions on how to build and run your code.
 
-# name it, limit memory and CPU
-sudo ./sentra run --name web --memory 512 --cpus 1.5 -t myapp
+### Recipe A: Frontend App (React, Vite, Vue, Next static)
 
-# writable rootfs
-sudo ./sentra run --rw -t myapp -- /bin/sh
+Build your production assets and serve them with a fast Nginx web server:
 
-# extra env vars
-sudo ./sentra run -e FOO=bar,BAZ=qux -t myapp
-
-# publish ports (8080 on host → 80 in container)
-sudo ./sentra run -p 8080:80 -t myapp
-
-# stricter seccomp
-sudo ./sentra run --security strict -t myapp
-```
-
-Run a built image by tag:
-
-```sh
-sudo ./sentra run -t myapp
-```
-
-## 3. Build from a Sentrafile
-
-Create a `Sentrafile`:
-
-```
-base golang:1.22 as builder
-workdir /src
-copy go.mod go.sum .
-exec go mod download
+```dockerfile
+# Step 1: Install packages and build static files
+base node:20-alpine as builder
+workdir /app
+copy package.json package-lock.json ./
+exec npm install
 copy . .
-exec go build -o /out/server ./cmd/server
+exec npm run build
 
-base alpine:3.20
-exec apk add --no-cache ca-certificates
-copy --from=builder /out/server /usr/local/bin/server
-expose 8080
-start /usr/local/bin/server
+# Step 2: Serve the build folder with Nginx
+base nginx:alpine
+copy --from=builder /app/dist /usr/share/nginx/html
+expose 80
+start nginx -g "daemon off;"
 ```
 
-Build it:
+*(If your project outputs to `build` instead of `dist`, change `/app/dist` to `/app/build`)*.
+
+---
+
+### Recipe B: Node.js / Express Backend API
+
+```dockerfile
+base node:20-alpine
+workdir /app
+
+# Install dependencies first (cached for fast builds)
+copy package.json package-lock.json ./
+exec npm install --production
+
+# Copy application source code
+copy . .
+
+expose 3000
+start node server.js
+```
+
+---
+
+### Recipe C: Python / FastAPI / Flask API
+
+```dockerfile
+base python:3.12-slim
+workdir /app
+
+# Install requirements
+copy requirements.txt .
+exec pip install --no-cache-dir -r requirements.txt
+
+# Copy application source code
+copy . .
+
+expose 8000
+start python main.py
+```
+
+---
+
+## 4. Build & Run Your App
+
+Once your `Sentrafile` is in your project directory:
+
+### Step 1: Build the image
 
 ```sh
-sudo ./sentra build -t myapp .
+sentra build -t my-app .
 ```
 
-Output:
+*What this does:* Sentra reads your `Sentrafile`, downloads layers in parallel, executes your build steps, and tags the output as `my-app`.
 
-```
-base golang:1.22
-[0] base    golang:1.22
-[1] workdir /src
-[2] copy    go.mod -> .
-[3] exec    go mod download
-...
-built myapp in 4.2s (2/5 layers cached)
-rootfs: /var/lib/sentra/built/myapp-rootfs
-run it:
-  sudo ./sentra run --rootfs /var/lib/sentra/built/myapp-rootfs -- /usr/local/bin/server
-exposes: 8080 (host publishing arrives with the networking workstream)
-```
-
-Build flags:
+### Step 2: Run the container
 
 ```sh
-# force rebuild, skip cache
-sudo ./sentra build -t myapp --no-cache .
-
-# custom Sentrafile path
-sudo ./sentra build -t myapp --file ./build/Sentrafile .
-
-# control parallel workers
-sudo ./sentra build -t myapp --workers 2 .
+sentra run -d -p 8080:80 --name my-running-app -t my-app
 ```
 
-## 4. Push to a registry
+*In plain English:*
+- `-d` = Run in the background (detached), so your terminal stays free.
+- `-p 8080:80` = Maps port `8080` on your machine to port `80` inside the container.
+- `--name my-running-app` = Gives the container a nickname so you can manage it.
+- `-t my-app` = Tells Sentra which built image to run.
 
-Push a built image. Only the build's own layers are uploaded — the base image
-is referenced from the registry it came from.
+Open **`http://localhost:8080`** in your browser to view your live app!
 
-```sh
-# push with the same tag (targets docker.io/library/myapp)
-sudo ./sentra push myapp
+---
 
-# push to a different destination
-sudo ./sentra push myapp ghcr.io/myorg/myapp:v1
-```
+## 5. The 5 Everyday Commands You Need
 
-For registries requiring auth, set `SENTRA_REGISTRY_TOKEN`:
+You only need five commands for 99% of your daily workflow:
 
-```sh
-SENTRA_REGISTRY_TOKEN=$(cat token.txt) sudo ./sentra push myapp ghcr.io/myorg/myapp:v1
-```
+| What you want to do | The Command |
+|---|---|
+| **Build your app** | `sentra build -t <app-name> .` |
+| **Run your app on a port** | `sentra run -d -p 8080:80 --name <container-name> -t <app-name>` |
+| **See running containers** | `sentra ps` |
+| **View live logs** | `sentra logs -f <container-name>` |
+| **Stop a container** | `sentra stop <container-name>` |
 
-Output:
+### Additional helpful commands:
+- **Run a shell inside a container:** `sentra exec -it <container-name> -- /bin/sh`
+- **List your images:** `sentra images`
+- **Remove a stopped container:** `sentra rm <container-name>`
 
-```
-pushed ghcr.io/myorg/myapp:v1
-digest sha256:... (2 build layer(s))
-```
+---
 
-> Images built without overlayfs layer support (e.g. non-root builds that fell
-> back to a plain rootfs copy) cannot be pushed. Rebuild as root
-> (`sudo sentra build`) for a pushable image.
+## 6. Where and Why to Use Sentra (Real Use Cases)
 
-## 5. Manage containers
+Sentra was built to replace heavyweight container engines in everyday development:
 
-```sh
-# list containers
-sudo ./sentra ps
+### 1. Everyday Local Web & App Development
+- **No background battery drain:** Docker Desktop consumes 2–4 GB of RAM and drains laptop battery even when you aren't running anything. Sentra has no background daemon; it only uses CPU/RAM when your container is actually executing.
+- **Instant startup:** You don't wait for a virtual machine or daemon to boot up.
 
-# stop a running container
-sudo ./sentra stop <id>
+### 2. Fast CI/CD Pipelines (GitHub Actions, GitLab CI)
+- **Zero Docker-in-Docker headaches:** In CI runners, Docker requires privileged root access or complex DinD setups. Sentra runs as an unprivileged static binary, saving setup time and improving pipeline security.
+- **Parallel layer caching:** Sentra builds multi-stage pipelines with a parallel DAG scheduler.
 
-# remove a container (use -f for running ones)
-sudo ./sentra rm <id>
-sudo ./sentra rm -f <id>
+### 3. Edge Computing & Low-Spec Cloud VPS
+- If you deploy to a \$5/mo VPS (1GB RAM on DigitalOcean, Hetzner, Linode) or a Raspberry Pi, Docker's daemon overhead takes up a noticeable chunk of system memory.
+- Sentra uses **0 MB of idle memory**. When your containers aren't running, Sentra uses zero resources.
 
-# view logs (follow with -f)
-sudo ./sentra logs <id>
-sudo ./sentra logs -f <id>
+### 4. Microservices & Isolated Test Suites
+- Spin up ephemeral Redis, PostgreSQL, or mock services during unit and integration test runs, run the test, and tear them down in milliseconds without socket pollution.
 
-# run a command inside a running container
-sudo ./sentra exec <id> -- /bin/sh
-```
+---
 
-## 6. Manage built images
+## Next Steps
 
-```sh
-# list built image tags
-sudo ./sentra images
-
-# remove a built image tag
-sudo ./sentra images -r myapp
-```
-
-## 7. Inspect a Sentrafile
-
-Validate a `Sentrafile` and see the build plan without executing it:
-
-```sh
-./sentra config Sentrafile
-./sentra config -q Sentrafile   # validate only, prints "ok"
-```
-
-## State directory
-
-Sentra stores everything as plain files:
-
-| Path (root) | Path (rootless) | Contents |
-|---|---|---|
-| `/var/lib/sentra` | `~/.sentra` | all state |
-| `…/blobs` | | downloaded OCI layers (content-addressed) |
-| `…/layers` | | extracted layer directories |
-| `…/rootfs` | | merged rootfs from `pull` |
-| `…/built` | | built image records + rootfs |
-| `…/build-cache` | | per-step layer diff cache |
-| `…/containers` | | container state (one JSON per container) |
-| `…/bundles` | | runc bundles |
-| `…/logs` | | container stdout/stderr logs |
-| `…/network` | | bridge address allocation table |
-
-No daemon, no socket, no lock server.
+- Check out [Sentrafile syntax](/#/docs/sentrafile) for the complete list of directives and build options.
+- Read [Sentra vs Docker vs Podman](/#/docs/comparison) to see how Sentra compares under the hood.

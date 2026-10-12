@@ -1,8 +1,8 @@
-# Architecture
+# Architecture & Internals
 
-Sentra is a single Go binary (`CGO_ENABLED=0`) with no daemon. The CLI forks
-directly into Linux namespaces, wraps `runc` for container creation, and stores
-all state as plain files. No background service, no socket, no lock server.
+> **Note:** This section is an in-depth reference for contributors and engineers curious about how Sentra works under the hood. If you just want to containerize and run your application, check out the [Quickstart Guide](/#/docs/quickstart) instead.
+
+Sentra is a single static Go binary (`CGO_ENABLED=0`) with no background daemon. The CLI forks directly into Linux namespaces, wraps `runc` for container execution, and stores all state as plain files. No background service, no socket, and no memory overhead when idle.
 
 ## Component diagram
 

@@ -1,228 +1,155 @@
-# Sentrafile syntax reference
+# Sentrafile Syntax Reference
 
-A `Sentrafile` is Sentra's build configuration format. It is intentionally
-**not** Dockerfile-compatible: a small, line-oriented format with no shell and
-no per-instruction flags. Every directive is a bare keyword followed by simple
-arguments.
-
-```
-# comment
-base <image> [as <name>]
-workdir <abs-path>
-copy [--from=<stage>] <src> <dest>
-exec <cmd> [args...]
-env KEY=VALUE [KEY=VALUE...]
-expose <port>[/proto] ...
-start <cmd> [args...]
-cache key=<value>
-secure rootless=<bool> readonly=<bool> seccomp=<default|strict>
-```
-
-- Blank lines are ignored.
-- Directives are case-insensitive (`BASE` == `base`).
-- Comments are full-line only; a `#` mid-line is literal.
-- Arguments use shell-like quoting: single quotes are literal, double quotes
-  honor backslash escapes, and a bare backslash escapes the next character.
-- There is **no** variable expansion, globbing, or command substitution.
+A `Sentrafile` is the recipe for building a container image with Sentra. It is clean, predictable, and has no hidden shell wrappers.
 
 ---
 
-## Directives
+## The Docker-to-Sentra Cheat Sheet
 
-### `base <image> [as <name>]`
+If you already know how to write a `Dockerfile`, you already know 90% of a `Sentrafile`:
 
-The base image for a build stage. **Required**, and must be the first
-directive in the file. Each `base` line starts a new stage.
+| Docker Directive | Sentra Directive | What it does | Example |
+|---|---|---|---|
+| `FROM` | `base` | Chooses the starting image | `base node:20-alpine` |
+| `WORKDIR` | `workdir` | Sets the folder inside the container | `workdir /app` |
+| `COPY` | `copy` | Copies files from your machine into the container | `copy package.json ./` |
+| `RUN` | `exec` | Runs a command during build time | `exec npm install` |
+| `ENV` | `env` | Sets environment variables | `env PORT=8080 NODE_ENV=production` |
+| `EXPOSE` | `expose` | Documents network ports | `expose 8080` |
+| `CMD` / `ENTRYPOINT` | `start` | The command that starts when container runs | `start node server.js` |
 
-```
+---
+
+## Directives in Detail
+
+### 1. `base <image> [as <name>]`
+Specifies the base image to build on top of. Can be any standard image from Docker Hub or GHCR.
+
+```dockerfile
+# Start from Alpine Linux
 base alpine:3.20
+
+# Start a multi-stage builder
 base golang:1.22 as builder
 ```
 
-- `<image>` is any OCI image reference Sentra can pull from Docker Hub or
-  GHCR (e.g. `alpine`, `alpine:3.20`, `ghcr.io/org/img:tag`).
-- `as <name>` names the stage so a later stage can reference it with
-  `base <name>` or `copy --from=<name>`. Stage names may contain letters,
-  digits, dashes, and underscores only.
-- Every stage **except the last** must be named — an unnamed stage cannot be
-  referenced, so it would be built and thrown away.
-- The final stage produces the image.
+---
 
-### `workdir <abs-path>`
+### 2. `workdir <path>`
+Sets the current working directory for subsequent `copy` and `exec` commands. The folder is automatically created if it does not exist.
 
-Sets the working directory for subsequent `copy` destinations and `exec`
-commands. Must be an absolute path.
-
-```
+```dockerfile
 workdir /app
 ```
 
-The directory is created if it does not exist, and that creation is captured
-in the step's layer.
+---
 
-### `copy [--from=<stage>] <src> <dest>`
+### 3. `copy [--from=<stage>] <source> <destination>`
+Copies files or folders from your computer into the container rootfs.
 
-Copies files or directories. By default `<src>` is read from the build
-context; with `--from=<stage>` it is read from an earlier stage's merged
-rootfs.
+```dockerfile
+# Copy local package files
+copy package.json package-lock.json ./
 
-```
+# Copy everything from current folder
 copy . .
-copy --from=builder /out/server /usr/local/bin/server
+
+# Copy built files from an earlier build stage
+copy --from=builder /app/dist /usr/share/nginx/html
 ```
-
-- `<src>` and `<dest>` are the only positional arguments.
-- `--from=` must be a stage declared earlier in the file.
-- `<dest>` is resolved relative to the current `workdir` unless it is
-  absolute.
-- Copy steps are content-addressed and cached automatically — a rebuild only
-  re-runs a `copy` when the files it reads change.
-
-### `exec <cmd> [args...]`
-
-Runs a command during the build. Arguments are passed **as argv** — there is
-no implicit shell, so `exec ls -l /tmp` runs `ls` with `[-l, /tmp]`, not a
-shell parsing a string.
-
-```
-exec apk add --no-cache ca-certificates
-exec go build -o /app/server ./cmd/server
-```
-
-- `exec` steps are **not** automatically cached, because a command's result
-  depends on the world, not just its argv. To cache an `exec` step, precede it
-  with a `cache key=` directive.
-
-### `env KEY=VALUE [KEY=VALUE...]`
-
-Sets one or more environment variables, visible to subsequent `exec` steps
-and recorded in the image config.
-
-```
-env GIN_MODE=release GOPATH=/go PATH=/go/bin:$PATH
-```
-
-Later assignments for the same key win.
-
-### `expose <port>[/proto] ...`
-
-Declares container ports as metadata. Ports are automatically published on
-`sentra run` unless `--no-publish` is passed.
-
-```
-expose 8080
-expose 8080/tcp 53/udp
-```
-
-- `<port>` is 1–65535.
-- `/proto` is one of `tcp`, `udp`, or `sctp` (default `tcp`).
-
-### `start <cmd> [args...]`
-
-The container's entrypoint. At most one `start` is allowed. If omitted, the
-user must supply a command to `sentra run`.
-
-```
-start /app/server
-start /bin/sh -c "exec /app/server"
-```
-
-Like `exec`, arguments are argv form — no implicit shell.
-
-### `cache key=<value>`
-
-Attaches a manual cache key to the **next** step. This overrides Sentra's
-automatic content-addressed caching and is the escape hatch for steps whose
-inputs are not just files (typically `exec`).
-
-```
-cache key=apt-v1
-exec apt-get update && apt-get install -y curl
-```
-
-- A `cache` directive with no step beneath it is a parse error.
-- Two consecutive `cache` directives are a parse error.
-- The manual key bypasses input hashing and the parent layer entirely — it is
-  a promise by the author that this step's output can be reused under this
-  identity.
-
-### `secure rootless=<bool> readonly=<bool> seccomp=<default|strict>`
-
-Declares the image's security posture. At most one `secure` directive is
-allowed, anywhere in the file. The posture is recorded at build time and
-applied automatically by `sentra run -t`.
-
-```
-secure rootless=true readonly=true seccomp=strict
-```
-
-| Option | Values | Default |
-|---|---|---|
-| `rootless` | `true`, `false` | `true` |
-| `readonly` | `true`, `false` | `true` |
-| `seccomp` | `default`, `strict` | `default` |
-
-- `rootless=true`: run in a user namespace owned by the invoking user.
-- `readonly=true`: mount the rootfs read-only.
-- `seccomp=default`: broad allowlist for ordinary workloads.
-- `seccomp=strict`: default minus syscalls that reach into kernel, module, or
-  device internals — for images that do not need them.
-
-The defaults match Sentra's runtime baseline, so omitting `secure` gives you
-the secure-by-default posture.
 
 ---
 
-## Multi-stage builds
+### 4. `exec <command> [args...]`
+Runs a command to install dependencies, compile code, or prepare files during the image build.
 
-A `Sentrafile` may declare several stages. Only the final stage becomes the
-image. Earlier stages exist to feed `copy --from=` or to serve as the base of
-a later stage.
-
+```dockerfile
+exec npm install
+exec apk add --no-cache curl
+exec python -m pip install -r requirements.txt
 ```
-base golang:1.22 as builder
-workdir /src
-copy go.mod go.sum .
-exec go mod download
-copy . .
-exec go build -o /out/server ./cmd/server
 
-base alpine:3.20
-exec apk add --no-cache ca-certificates
-copy --from=builder /out/server /usr/local/bin/server
+---
+
+### 5. `env KEY=VALUE ...`
+Sets one or more environment variables inside the container.
+
+```dockerfile
+env NODE_ENV=production PORT=3000
+```
+
+---
+
+### 6. `expose <port>`
+Declares which network port the application listens on.
+
+```dockerfile
+expose 3000
+expose 80 443
+```
+
+---
+
+### 7. `start <command> [args...]`
+Specifies what command to run when the container starts up.
+
+```dockerfile
+start node index.js
+start python app.py
 start /usr/local/bin/server
 ```
 
-- Each stage must be named except the last.
-- `base <name>` starts a stage from an earlier stage's full layer chain —
-  free, no re-pull.
-- `copy --from=<name>` lifts files out of an earlier stage's merged rootfs.
+---
+
+### 8. `secure rootless=<bool> readonly=<bool> seccomp=<default|strict>`
+*(Optional)* Declares the security profile for your image. By default, Sentra is already rootless and secure.
+
+```dockerfile
+secure rootless=true readonly=true seccomp=default
+```
 
 ---
 
-## Inspecting a Sentrafile
+## Complete Multi-Stage Example
 
-`sentra config` parses a `Sentrafile` and prints the resulting build plan
-without executing it:
+Multi-stage builds allow you to use heavy tools (Node compilers, Go compilers, build tools) to build your app, and then copy only the lightweight compiled output into a tiny, secure production image:
 
+```dockerfile
+# ================= Stage 1: Build =================
+base node:20-alpine as builder
+workdir /app
+
+# Cache dependencies
+copy package.json package-lock.json ./
+exec npm install
+
+# Copy source and build
+copy . .
+exec npm run build
+
+# ================= Stage 2: Production ============
+base nginx:alpine
+
+# Copy ONLY the static build output from Stage 1
+copy --from=builder /app/dist /usr/share/nginx/html
+
+expose 80
+start nginx -g "daemon off;"
 ```
+
+---
+
+## Validating Your Sentrafile
+
+Before building, you can verify that your `Sentrafile` has no syntax errors using:
+
+```sh
 sentra config Sentrafile
-sentra config -q Sentrafile   # validate only, print "ok"
 ```
 
-Example output:
+To just check for a pass/fail confirmation:
 
-```
-stages  2
-secure  rootless=true readonly=true seccomp=default
-
-stage   builder   base golang:1.22
-  steps 5
-  3 base golang:1.22
-  4 workdir /src
-  ...
-
-image   (final)   base alpine:3.20
-  steps 3
-  ...
+```sh
+sentra config -q Sentrafile
+# Prints: ok
 ```
