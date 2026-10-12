@@ -2,7 +2,7 @@
 export const CONFIG = {
   GITHUB_URL: "https://github.com/code-ninjax/Sentra",
   GITHUB_REPO: "code-ninjax/Sentra",
-  DOCS_URL: "https://github.com/code-ninjax/Sentra#readme",
+  DOCS_URL: "#/docs",
   INSTALL_CMD:
     "curl -fsSLO https://github.com/code-ninjax/Sentra/releases/latest/download/sentra-linux-amd64 && chmod +x sentra-linux-amd64 && sudo mv sentra-linux-amd64 /usr/local/bin/sentra",
   RELEASES_URL: "https://github.com/code-ninjax/Sentra/releases",

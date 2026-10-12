@@ -12,7 +12,7 @@ const LINKS = [
 
 // One fixed nav that morphs on scroll: full bar at top, compact floating
 // bar (wordmark + Docs + star only) once past the hero.
-export default function Nav({ starCount }) {
+export default function Nav({ starCount, currentRoute = "home" }) {
   const [theme, toggle] = useTheme();
   const [compact, setCompact] = useState(false);
   const [active, setActive] = useState("");
@@ -20,6 +20,10 @@ export default function Nav({ starCount }) {
   useEffect(() => {
     const onScroll = () => {
       setCompact(window.scrollY > window.innerHeight * 0.55);
+      if (currentRoute !== "home") {
+        setActive("");
+        return;
+      }
       let current = "";
       ["features", "benchmarks", "install", "roadmap"].forEach((id) => {
         const el = document.getElementById(id);
@@ -30,25 +34,32 @@ export default function Nav({ starCount }) {
     window.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
     return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [currentRoute]);
 
   const isLight = effective(theme) === "light";
 
   return (
     <nav className={"nav" + (compact ? " compact" : "")} aria-label="Main navigation">
       <div className="nav-inner">
-        <a className="wordmark" href="#top" aria-label="Sentra home">
+        <a className="wordmark" href="#/" aria-label="Sentra home">
           <LogoMark size={compact ? 22 : 26} />
           Sentra
         </a>
         <div className="nav-full">
           <div className="nav-links">
             {LINKS.map(([label, href]) => (
-              <a key={href} href={href} className={active === href.slice(1) ? "active" : ""}>
+              <a
+                key={href}
+                href={href}
+                className={currentRoute === "home" && active === href.slice(1) ? "active" : ""}
+              >
                 {label}
               </a>
             ))}
-            <a href={CONFIG.DOCS_URL} target="_blank" rel="noopener">
+            <a
+              href="#/docs"
+              className={currentRoute === "docs" ? "active" : ""}
+            >
               Docs
             </a>
           </div>
@@ -63,7 +74,10 @@ export default function Nav({ starCount }) {
           </div>
         </div>
         <div className="nav-compact-only">
-          <a className="nav-docs" href={CONFIG.DOCS_URL} target="_blank" rel="noopener">
+          <a
+            className={"nav-docs" + (currentRoute === "docs" ? " active" : "")}
+            href="#/docs"
+          >
             Docs
           </a>
           <a

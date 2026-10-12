@@ -10,10 +10,15 @@ import Benchmarks from "./components/Benchmarks";
 import Install from "./components/Install";
 import Roadmap from "./components/Roadmap";
 import Cta from "./components/Cta";
+import Docs from "./pages/Docs";
 import "./styles.css";
 
 function formatStars(n) {
   return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
+}
+
+function isDocsHash(hash) {
+  return hash.startsWith("#/docs") || hash.startsWith("#docs");
 }
 
 export default function App() {
@@ -30,6 +35,32 @@ export default function App() {
       }
     });
   });
+
+  const [route, setRoute] = useState(() => {
+    return isDocsHash(window.location.hash) ? "docs" : "home";
+  });
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const docs = isDocsHash(window.location.hash);
+      const nextRoute = docs ? "docs" : "home";
+      setRoute(nextRoute);
+
+      if (!docs) {
+        const targetId = window.location.hash.replace(/^#\/?/, "");
+        if (targetId && targetId !== "top") {
+          setTimeout(() => {
+            const el = document.getElementById(targetId);
+            if (el) el.scrollIntoView({ behavior: "smooth" });
+          }, 60);
+        } else {
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   const [stars, setStars] = useState("0");
   useEffect(() => {
@@ -77,16 +108,20 @@ export default function App() {
       <div className="bg-grid" />
       <div className="bg-glow" id="bg-glow" />
       <CursorGlow />
-      <Nav starCount={stars} />
-      <div className="wrap" id="top">
-        <Hero />
-        <CubeSection registerTheme={registerTheme} />
-        <StackSection registerTheme={registerTheme} />
-        <Benchmarks />
-        <Install />
-        <Roadmap />
-        <Cta starCount={stars} />
-      </div>
+      <Nav starCount={stars} currentRoute={route} />
+      {route === "docs" ? (
+        <Docs />
+      ) : (
+        <div className="wrap" id="top">
+          <Hero />
+          <CubeSection registerTheme={registerTheme} />
+          <StackSection registerTheme={registerTheme} />
+          <Benchmarks />
+          <Install />
+          <Roadmap />
+          <Cta starCount={stars} />
+        </div>
+      )}
     </>
   );
 }
