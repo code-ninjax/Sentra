@@ -1,0 +1,16 @@
+{
+  "stamp": "20261013-051840",
+  "image": "alpine:3.20", "image_digest": "",
+  "env": {"kernel": "6.18.40.1-microsoft-standard-WSL2", "cpus": 4, "mem_kb": 3951892, "euid": 1000},
+  "versions": {"runc": "runc version 1.4.0-0ubuntu1", "docker": "", "sentra_sha": "49c7a43"},
+  "method": {"startup": "wall-clock ms of full CLI run of /bin/true; 1 cold run after drop_caches + 20 warm interleaved", "memory": "VmHWM kB of detached /bin/sleep 300 init PID after 2s settle"},
+  "cold_note": "drop_caches needs privilege; cold runs skipped (run script with sudo-capable user for them)",
+  "startup_ms": {
+    "sentra": {"cold": null, "n": 20, "mean": 397, "median": 387, "min": 371, "max": 478, "p95": 474, "samples": [474,478,383,374,402,388,404,402,408,379,393,385,377,415,388,380,386,378,387,371]},
+    "docker": {"cold": null, "n": 0, "mean": 0, "median": 0, "min": 0, "max": 0, "p95": 0, "samples": []}
+  },
+  "memory_kb": {
+    "sentra": {"n": 5, "mean": 1101, "median": 1112, "min": 1040, "max": 1164, "p95": 1132, "samples": [1132,1164,1112,1040,1060]},
+    "docker": {"n": 0, "mean": 0, "median": 0, "min": 0, "max": 0, "p95": 0, "samples": []}
+  }
+}
