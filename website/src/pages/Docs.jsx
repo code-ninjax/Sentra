@@ -54,9 +54,10 @@ const INSTALL_TABS = {
     steps: [
       { text: "In PowerShell, install WSL2 (restart after):", cmd: "wsl --install" },
       { text: "Open Ubuntu, then paste the same installer:", cmd: "curl -fsSL https://trysentra.tech/install.sh | sh" },
-      { text: "Check it worked:", cmd: "sentra --version" },
+      { text: "Check it worked (in Ubuntu):", cmd: "sentra --version" },
+      { text: "Want it in PowerShell too? Download the forwarder:", cmd: "Invoke-WebRequest https://github.com/code-ninjax/Sentra/releases/latest/download/sentra.exe -OutFile $HOME\\bin\\sentra.exe" },
     ],
-    note: "Sentra runs inside WSL2 — containers need a Linux kernel, same as Docker Desktop.",
+    note: "Put sentra.exe somewhere on your PATH — then sentra works from PowerShell by forwarding into WSL2.",
   },
 };
 

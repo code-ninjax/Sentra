@@ -20,7 +20,7 @@ sentra --version
 
 That's it. No service to start, no daemon running in the background.
 
-**On Windows?** Install WSL2 first — run `wsl --install` in PowerShell and restart. Then open Ubuntu and run the same command above. Sentra lives inside WSL2.
+**On Windows?** Install WSL2 first — run `wsl --install` in PowerShell and restart. Then open Ubuntu and run the same command above. Sentra lives inside WSL2. To also use it straight from PowerShell, grab `sentra.exe` from the [Releases page](https://github.com/code-ninjax/Sentra/releases), put it on your PATH, and `sentra ps` will work there too (it just forwards into WSL).
 
 **Missing `runc`?** Most systems already have it. If anything complains, run `sudo apt install -y runc` and retry.
 
