@@ -78,8 +78,9 @@ export async function initBenchScene(opts) {
   function valueLabel(meta) {
     const C = css();
     const main = meta.value > 0 ? `${meta.value}${meta.unit}` : "TBD";
+    const mainColor = meta.value <= 0 || meta.runtime === "docker" ? C.muted : C.accent;
     return labelSprite([
-      { text: main, color: meta.value > 0 ? C.accent : C.muted, size: 84, weight: 700 },
+      { text: main, color: mainColor, size: 84, weight: 700 },
       { text: `${meta.runtime} · n=${meta.n}`, color: C.muted, size: 44 },
     ]);
   }
@@ -121,11 +122,13 @@ export async function initBenchScene(opts) {
         const h = barH(b.value, max);
         const geo = new THREE.BoxGeometry(0.95, 1, 0.95);
         const tbd = b.value <= 0;
+        const isDocker = b.runtime === "docker";
+        const baseColor = tbd ? T.tile : isDocker ? T.faint : T.edge;
         const mat = new THREE.MeshStandardMaterial({
-          color: tbd ? T.tile : T.edge,
+          color: baseColor,
           roughness: 0.35, metalness: 0.4,
-          transparent: true, opacity: tbd ? 0.18 : 0.92,
-          emissive: tbd ? T.faint : T.edge, emissiveIntensity: tbd ? 0.08 : 0.12,
+          transparent: true, opacity: tbd ? 0.18 : isDocker ? 0.85 : 0.92,
+          emissive: tbd ? T.faint : baseColor, emissiveIntensity: tbd ? 0.08 : 0.12,
         });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.scale.y = h;
@@ -135,7 +138,7 @@ export async function initBenchScene(opts) {
         const edges = new THREE.LineSegments(
           new THREE.EdgesGeometry(geo),
           new THREE.LineBasicMaterial({
-            color: tbd ? T.faint : T.edge, transparent: true, opacity: tbd ? 0.8 : 0.95,
+            color: tbd ? T.faint : baseColor, transparent: true, opacity: tbd ? 0.8 : 0.95,
           }));
         edges.scale.y = h;
         edges.position.copy(mesh.position);
@@ -206,9 +209,11 @@ export async function initBenchScene(opts) {
       const C = css();
       meshes.forEach((m) => {
         const tbd = m.meta.value <= 0;
-        m.mesh.material.color.setHex(tbd ? T.tile : T.edge);
-        m.mesh.material.emissive.setHex(tbd ? T.faint : T.edge);
-        m.edges.material.color.setHex(tbd ? T.faint : T.edge);
+        const isDocker = m.meta.runtime === "docker";
+        const baseColor = tbd ? T.tile : isDocker ? T.faint : T.edge;
+        m.mesh.material.color.setHex(baseColor);
+        m.mesh.material.emissive.setHex(tbd ? T.faint : baseColor);
+        m.edges.material.color.setHex(tbd ? T.faint : baseColor);
         m.slab.mat.color.setHex(T.tile);
         m.slab.edges.color.setHex(T.slab);
         const old = m.label.material.map;

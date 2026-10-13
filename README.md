@@ -189,5 +189,24 @@ sentra/
 ## Status
 
 Core runtime, image handling, Sentrafile format, build engine, security
-defaults, and networking are implemented. Binary-size/release pipeline and
-landing page are done. Benchmarking is the remaining workstream.
+defaults, networking, binary-size/release pipeline, and landing page are
+done. Benchmarks are measured — see below.
+
+---
+
+## Benchmarks
+
+`sentra run` vs `docker run`, same pinned image (`alpine:3.20`), WSL2 4CPU,
+runc 1.4.0, Docker 29.1.3. Method: wall-clock of a full CLI run of
+`/bin/true` (startup, median of 20 interleaved runs) and VmHWM of a
+detached `/bin/sleep` init (memory, median of 5). Raw samples and
+methodology: [`benchmarks/results/`](benchmarks/results/),
+reproduce with `./scripts/benchmark.sh` inside WSL2.
+
+| metric | sentra | docker |
+|---|---|---|
+| startup median | **0.39s** | 0.89s |
+| idle VmHWM median | 0.99MB | **0.86MB** |
+
+Sentra starts containers ~2.3x faster with no daemon; idle footprint is
+within ~15% — the tradeoff is stated, not hidden.

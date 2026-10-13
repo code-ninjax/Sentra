@@ -6,12 +6,12 @@ export const CONFIG = {
   INSTALL_CMD:
     "curl -fsSLO https://github.com/code-ninjax/Sentra/releases/latest/download/sentra-linux-amd64 && chmod +x sentra-linux-amd64 && sudo mv sentra-linux-amd64 /usr/local/bin/sentra",
   RELEASES_URL: "https://github.com/code-ninjax/Sentra/releases",
-  // Real medians from benchmarks/results (2026-10-13, WSL2 4CPU).
-  // Zeros render as "TBD" ghost bars — docker side lands when the
-  // Docker Desktop WSL integration is on; rerun scripts/benchmark.sh.
+  // Real medians from benchmarks/results (2026-10-13, WSL2 4CPU,
+  // alpine:3.20, runc 1.4.0, docker 29.1.3). Zeros render as "TBD"
+  // ghost bars — rerun scripts/benchmark.sh to refresh.
   benchmarks: {
-    startup: { sentra: 0.39, docker: 0, unit: "s", n: 20, stamp: "2026-10-13" },
-    memory: { sentra: 1.04, docker: 0, unit: "MB", n: 5, stamp: "2026-10-13" },
+    startup: { sentra: 0.39, docker: 0.89, unit: "s", n: 20, stamp: "2026-10-13" },
+    memory: { sentra: 0.99, docker: 0.86, unit: "MB", n: 5, stamp: "2026-10-13" },
   },
 };
 
