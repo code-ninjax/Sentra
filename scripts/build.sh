@@ -5,7 +5,8 @@
 #   bash scripts/build.sh [--pack] [--out-dir DIR] [--goos OS] [--goarch ARCH]
 #
 # Flags:
-#   CGO_ENABLED=0 and -trimpath -ldflags="-s -w" are always applied.
+#   CGO_ENABLED=0 and -trimpath -ldflags="-s -w" are always applied, plus
+#   -X sentra/internal/cli.Version=<git describe> so `sentra version` is real.
 #   --pack additionally produces a UPX-compressed binary (UPX must be
 #   installed; `sudo apt install -y upx` on Debian/Ubuntu).
 #
@@ -72,10 +73,13 @@ checksum() {
 mkdir -p "$OUT_DIR"
 BIN="$OUT_DIR/sentra-$GOOS-$GOARCH"
 
+# Stamp the release tag into `sentra version` (falls back to "dev").
+VERSION="$(git describe --tags 2>/dev/null || echo dev)"
+
 echo "building $BIN (CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH, -trimpath -s -w)"
 CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" "$GO" build \
   -trimpath \
-  -ldflags="-s -w" \
+  -ldflags="-s -w -X sentra/internal/cli.Version=$VERSION" \
   -o "$BIN" \
   ./cmd/sentra
 

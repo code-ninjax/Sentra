@@ -38,8 +38,75 @@ function extractHashSlug(hash) {
   return clean || "quickstart";
 }
 
-function CodePre({ children, ...props }) {
-  const [copied, setCopied] = useState(false);
+// OS picker for the Quickstart page: Windows / Linux switch with
+// copyable install commands. One command per step, plain words.
+const INSTALL_TABS = {
+  linux: {
+    label: "Linux",
+    steps: [
+      { text: "Paste this in your terminal:", cmd: "curl -fsSL https://trysentra.tech/install.sh | sh" },
+      { text: "Check it worked:", cmd: "sentra --version" },
+    ],
+    note: "Missing runc? Most systems have it. If not: sudo apt install -y runc, then retry.",
+  },
+  windows: {
+    label: "Windows",
+    steps: [
+      { text: "In PowerShell, install WSL2 (restart after):", cmd: "wsl --install" },
+      { text: "Open Ubuntu, then paste the same installer:", cmd: "curl -fsSL https://trysentra.tech/install.sh | sh" },
+      { text: "Check it worked:", cmd: "sentra --version" },
+    ],
+    note: "Sentra runs inside WSL2 — containers need a Linux kernel, same as Docker Desktop.",
+  },
+};
+
+function OsToggle() {
+  const [os, setOs] = useState("linux");
+  const [copied, setCopied] = useState(-1);
+  const copy = (i, text) => {
+    try {
+      navigator.clipboard.writeText(text);
+    } catch {
+      /* clipboard unavailable */
+    }
+    setCopied(i);
+    setTimeout(() => setCopied(-1), 1500);
+  };
+  const tab = INSTALL_TABS[os];
+  return (
+    <div className="docs-os-toggle">
+      <div className="docs-os-tabs" role="tablist" aria-label="Choose your system">
+        {Object.entries(INSTALL_TABS).map(([id, t]) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={os === id}
+            className={"docs-os-tab" + (os === id ? " active" : "")}
+            onClick={() => setOs(id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <ol className="docs-os-steps">
+        {tab.steps.map((s, i) => (
+          <li key={i}>
+            <p>{s.text}</p>
+            <div className="docs-os-cmd">
+              <code className="mono">{s.cmd}</code>
+              <button type="button" className="docs-code-copy" onClick={() => copy(i, s.cmd)}>
+                {copied === i ? "Copied" : "Copy"}
+              </button>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <p className="docs-os-note">{tab.note}</p>
+    </div>
+  );
+}
+
+function CodePre({ children, ...props }) {  const [copied, setCopied] = useState(false);
 
   // Extract raw text content from children (which is a <code> tag)
   const extractText = (node) => {
@@ -213,6 +280,7 @@ export default function Docs() {
           </div>
 
           <article className="docs-prose">
+            {active === "quickstart" && <OsToggle />}
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={markdownComponents}

@@ -343,6 +343,9 @@ section { padding: 72px 0; }
 .face-nav button:hover { border-color: var(--accent-line); color: var(--accent); }
 @media (max-width: 900px) {
   .cube-layout { grid-template-columns: minmax(0, 1fr); }
+  .bench-3d-layout { grid-template-columns: minmax(0, 1fr); }
+  .bench-stage { min-height: 360px; }
+  #bench-canvas { height: 360px; }
   #cube-canvas, .css-cube-fallback { height: 360px; }
   #cube-wires { display: none; }
 }
@@ -369,7 +372,25 @@ section { padding: 72px 0; }
 .stack-chip:hover { border-color: var(--accent-line); color: var(--fg); transform: translateY(-2px); }
 .stack-chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 
-/* ============ benchmarks ============ */
+/* ============ benchmarks: interactive 3D chart + 2D bars ============ */
+.bench-3d-layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 32px; margin-top: 44px; align-items: stretch; }
+.bench-3d-layout > * { min-width: 0; }
+.bench-stage { position: relative; border: 1px solid var(--border); background: var(--card); min-height: 480px; overflow: hidden; }
+#bench-canvas { display: block; width: 100%; height: 480px; touch-action: none; cursor: grab; }
+#bench-canvas:active { cursor: grabbing; }
+.bench-detail { border: 1px solid var(--border); background: var(--card); padding: 28px; flex: 1; }
+.bench-detail h3 { font-size: 24px; }
+.bench-detail h3 .idx { color: var(--accent); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px; display: block; margin-bottom: 8px; text-transform: uppercase; }
+.bench-detail p { color: var(--muted); margin-top: 10px; font-size: 15px; }
+.bench-detail .feature-stat { white-space: normal; overflow-wrap: anywhere; }
+.bench-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+.bench-chip {
+  border: 1px solid var(--border); background: var(--card); color: var(--muted);
+  padding: 12px 6px; min-height: 48px; font-size: 12.5px; cursor: pointer; text-align: center;
+  font-family: inherit; transition: border-color 0.15s ease, color 0.15s ease;
+}
+.bench-chip:hover { border-color: var(--accent-line); color: var(--fg); }
+.bench-chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 .bench-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 40px; }
 @media (max-width: 700px) { .bench-grid { grid-template-columns: minmax(0, 1fr); } }
 .bench-card { border: 1px solid var(--border); background: var(--card); padding: 28px; }
@@ -473,7 +494,7 @@ footer a:hover { color: var(--accent); }
   .css-cube-fallback { min-height: 360px; }
   .hero { padding-top: 120px; }
   .hero p.sub { font-size: 17px; }
-  .feature-detail, .stack-detail, .bench-card { padding: 22px; }
+  .feature-detail, .stack-detail, .bench-card, .bench-detail { padding: 22px; }
   .term-body { padding: 18px; font-size: 13.5px; }
   .cta-slim { padding: 22px; }
 }
@@ -571,6 +592,37 @@ footer a:hover { color: var(--accent); }
   color: var(--accent);
   font-weight: 600;
 }
+
+/* OS install picker (Quickstart): Windows / Linux switch, copyable commands */
+.docs-os-toggle {
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: 22px;
+  margin-bottom: 28px;
+}
+.docs-os-tabs { display: flex; gap: 10px; margin-bottom: 18px; }
+.docs-os-tab {
+  flex: 1; padding: 12px; font-size: 14px; font-weight: 600;
+  border: 1px solid var(--border); background: transparent; color: var(--muted);
+  cursor: pointer; font-family: inherit; transition: all 0.15s ease;
+}
+.docs-os-tab:hover { color: var(--fg); border-color: var(--accent-line); }
+.docs-os-tab.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+.docs-os-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; counter-reset: step; }
+.docs-os-steps li { counter-increment: step; min-width: 0; }
+.docs-os-steps p { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+.docs-os-steps p::before { content: counter(step) ". "; color: var(--accent); font-weight: 600; }
+.docs-os-cmd {
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid var(--border); background: var(--terminal);
+  padding: 10px 14px; max-width: 100%;
+}
+.docs-os-cmd code {
+  flex: 1; min-width: 0; color: #e8e8e8; font-size: 13.5px;
+  overflow-x: auto; white-space: nowrap; scrollbar-width: none;
+}
+.docs-os-cmd code::-webkit-scrollbar { display: none; }
+.docs-os-note { color: var(--faint); font-size: 13px; margin-top: 16px; }
 
 /* Desktop Sidebar */
 .docs-sidebar {

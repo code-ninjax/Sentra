@@ -116,7 +116,7 @@ export default function App() {
           <Hero />
           <CubeSection registerTheme={registerTheme} />
           <StackSection registerTheme={registerTheme} />
-          <Benchmarks />
+          <Benchmarks registerTheme={registerTheme} />
           <Install />
           <Roadmap />
           <Cta starCount={stars} />

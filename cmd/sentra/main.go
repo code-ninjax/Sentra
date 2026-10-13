@@ -24,6 +24,7 @@ Usage:
   sentra rm   CONTAINER
   sentra logs CONTAINER [-f]
   sentra exec CONTAINER -- CMD [ARGS...]
+  sentra version               print the release version
 `
 
 func main() {
@@ -56,6 +57,8 @@ func main() {
 		err = cli.LogsCmd(os.Args[2:])
 	case "exec":
 		err = cli.ExecCmd(os.Args[2:])
+	case "version", "--version", "-version":
+		err = cli.VersionCmd()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", os.Args[1], usage)
 		os.Exit(2)
