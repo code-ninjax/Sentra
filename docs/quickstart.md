@@ -4,19 +4,59 @@ Get up and running with Sentra in under 60 seconds. No background daemon, no com
 
 ---
 
-## 1. Install Sentra (10 Seconds)
+## 1. Install Sentra (60 Seconds)
 
-Sentra is a single, static binary (~8 MB). Run this in your terminal:
+Sentra is a single, static binary (~8 MB on Linux, ~2 MB forwarder on Windows). Pick your OS:
+
+### Linux
+
+Requirements: a kernel with cgroups v2 + overlayfs, and `runc` (`sudo apt install runc` on Debian/Ubuntu).
 
 ```sh
 curl -fsSL https://trysentra.tech/install.sh | sh
 ```
 
-Verify it's working:
+Or install the binary by hand:
 
 ```sh
-sentra --version
+curl -fsSLO https://github.com/code-ninjax/Sentra/releases/latest/download/sentra-linux-amd64
+chmod +x sentra-linux-amd64
+sudo mv sentra-linux-amd64 /usr/local/bin/sentra
 ```
+
+Verify it (rootless works out of the box — no service to start):
+
+```sh
+sentra ps
+# no containers
+```
+
+### Windows (via WSL2)
+
+Containers need a Linux kernel, so on Windows Sentra runs through WSL2 — the same approach Docker Desktop uses. Setup is one-time:
+
+```powershell
+# 1. Install WSL2 + Ubuntu (restart when prompted), then open Ubuntu
+wsl --install
+```
+
+```sh
+# 2. Inside Ubuntu: install runc and the sentra Linux binary
+sudo apt update && sudo apt install -y runc
+curl -fsSLO https://github.com/code-ninjax/Sentra/releases/latest/download/sentra-linux-amd64
+chmod +x sentra-linux-amd64
+sudo install -m755 sentra-linux-amd64 /usr/local/bin/sentra
+```
+
+```powershell
+# 3. Back in Windows: download sentra.exe (the tiny forwarder) from the
+#    same Releases page and put it somewhere on your PATH, e.g. $HOME\bin
+# 4. Verify from PowerShell — this forwards into WSL automatically:
+sentra ps
+# no containers
+```
+
+Windows paths in arguments are translated for you (`C:\data` → `/mnt/c/data`), and exit codes pass straight through, so `sentra` behaves the same in PowerShell as it does in bash.
 
 > **Why this is different from Docker:** You do **not** need to start a service (`sudo systemctl start docker` or open Docker Desktop). Sentra runs directly as a command and exits when finished.
 
