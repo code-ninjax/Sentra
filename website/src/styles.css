@@ -343,9 +343,6 @@ section { padding: 72px 0; }
 .face-nav button:hover { border-color: var(--accent-line); color: var(--accent); }
 @media (max-width: 900px) {
   .cube-layout { grid-template-columns: minmax(0, 1fr); }
-  .bench-3d-layout { grid-template-columns: minmax(0, 1fr); }
-  .bench-stage { min-height: 360px; }
-  #bench-canvas { height: 360px; }
   #cube-canvas, .css-cube-fallback { height: 360px; }
   #cube-wires { display: none; }
 }
@@ -402,6 +399,12 @@ section { padding: 72px 0; }
 .bench-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 1.2s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .bench-bar.dim i { background: var(--faint); }
 .bench-note { text-align: center; color: var(--faint); font-size: 13px; margin-top: 22px; }
+/* mobile collapse AFTER the base rules above so it wins at equal specificity */
+@media (max-width: 900px) {
+  .bench-3d-layout { grid-template-columns: minmax(0, 1fr); }
+  .bench-stage { min-height: 360px; }
+  #bench-canvas { height: 360px; }
+}
 
 /* ============ install terminal ============ */
 .terminal { margin-top: 36px; border: 1px solid var(--border); background: #0d0d0d; color: #e8e8e8; overflow: hidden; position: relative; }

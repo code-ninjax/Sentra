@@ -92,9 +92,17 @@ export async function initBenchScene(opts) {
 
   const meshes = []; // {mesh, edges, label, meta, base}
   const clusters = [
-    { metric: "Startup time", x: -2.5, title: "STARTUP · LOWER IS BETTER" },
-    { metric: "Memory footprint", x: 2.5, title: "MEMORY · LOWER IS BETTER" },
+    { metric: "Startup time", x: -2.5, title: "STARTUP", sub: "lower is better" },
+    { metric: "Memory footprint", x: 2.5, title: "MEMORY", sub: "lower is better" },
   ];
+
+  function titleSprite(cl) {
+    const C = css();
+    return labelSprite([
+      { text: cl.title, color: C.muted, size: 72, weight: 700 },
+      { text: cl.sub, color: C.muted, size: 44 },
+    ]);
+  }
 
   clusters.forEach((cl) => {
     const g = new THREE.Group();
@@ -149,13 +157,13 @@ export async function initBenchScene(opts) {
         meshes.push({ mesh, edges, label, meta: b, slab: g.userData.slab });
       });
 
-    const C = css();
-    const title = labelSprite([{ text: cl.title, color: C.muted, size: 52 }]);
-    title.position.set(0, -0.85, 1.4);
-    title.scale.set(3.4, 1.0, 1);
+    const title = titleSprite(cl);
+    title.position.set(0, -0.55, 1.7);
+    title.scale.set(2.7, 1.35, 1);
     g.add(title);
     g.userData.title = title;
     g.userData.titleText = cl.title;
+    g.userData.titleSub = cl.sub;
     world.add(g);
   });
 
@@ -206,7 +214,6 @@ export async function initBenchScene(opts) {
     retheme() {
       T = pal();
       under.color.setHex(T.slab);
-      const C = css();
       meshes.forEach((m) => {
         const tbd = m.meta.value <= 0;
         const isDocker = m.meta.runtime === "docker";
@@ -226,7 +233,7 @@ export async function initBenchScene(opts) {
       world.children.forEach((g) => {
         if (!g.userData.title) return;
         const old = g.userData.title.material.map;
-        const fresh = labelSprite([{ text: g.userData.titleText, color: C.muted, size: 52 }]);
+        const fresh = titleSprite({ title: g.userData.titleText, sub: g.userData.titleSub });
         g.userData.title.material.map = fresh.material.map;
         g.userData.title.material.needsUpdate = true;
         old.dispose();
